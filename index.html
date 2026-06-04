@@ -157,9 +157,9 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
 <!-- 홈 -->
 <div id="page-home" class="page on">
   <div class="stats">
-    <div class="stat"><div class="stat-lbl">진행 중인 현장</div><div class="stat-val">6<span class="unit">곳</span></div><div class="stat-sub">활성 프로젝트</div></div>
-    <div class="stat"><div class="stat-lbl">이번 달 매출</div><div class="stat-val">4,200<span class="unit">만원</span></div><div class="stat-sub">순이익 1,800만원</div></div>
-    <div class="stat"><div class="stat-lbl">이번 달 지출</div><div class="stat-val">2,400<span class="unit">만원</span></div><div class="stat-sub">이번 달 누적</div></div>
+    <div class="stat"><div class="stat-lbl">진행 중인 현장</div><div class="stat-val" id="stat-active-sites">0<span class="unit">곳</span></div><div class="stat-sub">활성 프로젝트</div></div>
+    <div class="stat"><div class="stat-lbl">이번 달 매출</div><div class="stat-val" id="stat-month-rev">0<span class="unit">만원</span></div><div class="stat-sub" id="stat-month-rev-sub">—</div></div>
+    <div class="stat"><div class="stat-lbl">이번 달 지출</div><div class="stat-val" id="stat-month-cost">0<span class="unit">만원</span></div><div class="stat-sub">이번 달 누적</div></div>
     <div class="stat" style="cursor:pointer;transition:box-shadow .15s" onclick="goToTodayCalendar()" title="전체 달력으로 이동" onmouseover="this.style.boxShadow='0 0 0 2px var(--acc)'" onmouseout="this.style.boxShadow=''"><div class="stat-lbl">오늘 일정 <i class="ti ti-calendar" style="font-size:11px;color:var(--acc)"></i></div><div class="stat-val" id="stat-today">0<span class="unit">건</span></div><div class="stat-sub" id="stat-today-sub">현장별+상담 일정</div></div>
   </div>
   <div class="card">
@@ -665,85 +665,20 @@ const ORDER_ST=['발주요청','납품완료'];
 const CONTRACT_ST=['공사진행중','공사완료'];
 
 // ===== DATA =====
-let consultList=[
-  {dt:'2026.06.03 10:00',name:'이하준',addr:'고양시 일산동구 정발산로 22-5',phone:'010-1234-5678',type:'실측 상담',mgr:'김민섭',memo:'현장 실측 및 견적 논의',status:'예정'},
-  {dt:'2026.06.06 15:00',name:'신규고객',addr:'',phone:'010-3333-4444',type:'사무실 상담',mgr:'한민재',memo:'신규 문의',status:'예정'},
-  {dt:'2026.05.28 11:00',name:'정하늘',addr:'고양시 일산동구 마두동 13',phone:'010-3333-4444',type:'사무실 상담',mgr:'김민섭',memo:'계약 마무리',status:'완료'},
-];
-let siteList=[
-  {name:'이하준',phone:'010-1234-5678',addr:'고양시 일산동구 정발산로 22-5',type:'인테리어',mgr:'김민섭',amt:8500000,start:'2026.05.15',end:'2026.07.15',memo:'거실+주방',status:'진행중',file:false},
-  {name:'박지우',phone:'010-9876-5432',addr:'고양시 덕양구 화정로 88',type:'리모델링',mgr:'한민재',amt:15000000,start:'2026.04.01',end:'2026.07.01',memo:'전체',status:'진행중',file:true},
-  {name:'이서준',phone:'010-5555-1234',addr:'파주시 금촌동 101-3',type:'욕실',mgr:'김민섭',amt:3200000,start:'2026.01.22',end:'2026.02.28',memo:'욕실',status:'완료',file:true},
-];
-let siteLogs=[
-  {date:'2026.06.01',site:'박지우 현장',mgr:'한민재',summary:'타일 줄눈 간격 불균일 발견 — 재시공 필요',process:'타일',photos:['https://picsum.photos/seed/sl1/300/300','https://picsum.photos/seed/sl2/300/300']},
-  {date:'2026.06.01',site:'이서준 현장',mgr:'김민섭',summary:'욕실 하부 방수 미시공 구간 발견 — 즉시 재시공',process:'욕실',photos:[]},
-  {date:'2026.05.31',site:'최윤아 현장',mgr:'김민섭',summary:'주방 가구 설치 시 벽면 기준선 오류 — 재측정 완료',process:'가구',photos:['https://picsum.photos/seed/sl3/300/300']},
-];
-let estimates=[
-  {title:'거실+주방 인테리어 공사 견적',cust:'이하준',mgr:'김민섭',date:'2026.05.08',amt:8500000,status:'계약완료',file:true},
-  {title:'전체 욕실 리모델링',cust:'이서준',mgr:'한민재',date:'2026.05.16',amt:3200000,status:'계약완료',file:true},
-  {title:'주방 리모델링 공사',cust:'최윤아',mgr:'김민섭',date:'2026.05.19',amt:4800000,status:'검토중',file:false},
-  {title:'전체 인테리어 패키지',cust:'박지우',mgr:'한민재',date:'2026.04.25',amt:15000000,status:'계약완료',file:true},
-  {title:'원룸 풀 패키지',cust:'정하늘',mgr:'김민섭',date:'2026.05.26',amt:6200000,status:'상담종료',file:false},
-  {title:'욕실+거실 리모델링',cust:'신규고객',mgr:'한민재',date:'2026.05.28',amt:5500000,status:'대면상담',file:false},
-];
-let contracts=[
-  {mgr:'김민섭',cust:'이하준',phone:'010-1234-5678',addr:'고양시 일산동구 정발산로 22-5',amt:8500000,vat:'포함',date:'2026.05.10',status:'공사진행중',file:true},
-  {mgr:'한민재',cust:'박지우',phone:'010-9876-5432',addr:'고양시 덕양구 화정로 88',amt:15000000,vat:'미포함',date:'2026.04.28',status:'공사진행중',file:true},
-  {mgr:'김민섭',cust:'이서준',phone:'010-5555-1234',addr:'파주시 금촌동 101-3',amt:3200000,vat:'포함',date:'2026.01.22',status:'공사완료',file:false},
-];
-let vpList=[
-  {type:'타일',name:'(주)대성타일',mgr:'김대성',phone:'031-000-1111',item:'타일 시공 m² 35,000원',memo:'',file:true},
-  {type:'도배',name:'LG하우시스',mgr:'박수진',phone:'02-000-3333',item:'일반도배 m² 8,000원 / 합지 6,500원',memo:'대량 할인 가능',file:true},
-  {type:'욕실',name:'삼화위생',mgr:'이삼화',phone:'031-000-2222',item:'수전 세트 320,000원~',memo:'',file:false},
-  {type:'가구',name:'한샘',mgr:'최한솔',phone:'031-000-4444',item:'씽크대 850,000원~',memo:'설치 포함',file:true},
-  {type:'전기',name:'(주)밝은전기',mgr:'전기수',phone:'010-8888-1111',item:'조명 설치 개당 15,000원',memo:'',file:false},
-  {type:'바닥',name:'강마루전문점',mgr:'마루김',phone:'031-111-2222',item:'강마루 m² 45,000원',memo:'',file:true},
-];
-let profits=[
-  {site:'이하준 — 거실+주방',contract:8500000,costs:[{date:'2026.05.12',process:'타일',desc:'주방 타일 시공',amt:640000,receipt:true},{date:'2026.05.18',process:'전기',desc:'조명 전체 교체',amt:280000,receipt:false}],status:'진행중'},
-  {site:'박지우 — 전체 인테리어',contract:15000000,costs:[{date:'2026.05.10',process:'도배',desc:'전체 도배',amt:1200000,receipt:true},{date:'2026.05.15',process:'바닥',desc:'강마루 시공',amt:900000,receipt:true},{date:'2026.05.22',process:'욕실',desc:'수전 교체',amt:480000,receipt:false}],status:'진행중'},
-  {site:'이서준 — 욕실',contract:3200000,costs:[{date:'2026.01.25',process:'욕실',desc:'욕실 전체',amt:1650000,receipt:true}],status:'완료'},
-  {site:'최윤아 — 주방',contract:4800000,costs:[{date:'2026.05.28',process:'가구',desc:'씽크대 납품·설치',amt:1200000,receipt:false}],status:'진행중'},
-];
-let payments=[
-  {date:'2026.06.01',target:'이하준',type:'입금',amt:3000000,method:'계좌이체',memo:'2차 중도금',status:'완료',receipt:false},
-  {date:'2026.05.30',target:'(주)대성타일',type:'출금',amt:640000,method:'계좌이체',memo:'타일 시공 대금',status:'완료',receipt:true},
-  {date:'2026.05.28',target:'박지우',type:'입금',amt:5000000,method:'계좌이체',memo:'계약금',status:'완료',receipt:false},
-  {date:'2026.06.02',target:'한샘',type:'출금',amt:1200000,method:'카드',memo:'씽크대 구매',status:'완료',receipt:true},
-];
-let orders=[
-  {vendor:'(주)대성타일',site:'이하준 현장',cust:'이하준',mgr:'김민섭',amt:640000,date:'2026.05.18',status:'납품완료',receipt:true},
-  {vendor:'삼화위생',site:'이서준 현장',cust:'이서준',mgr:'한민재',amt:480000,date:'2026.05.20',status:'발주요청',receipt:false},
-  {vendor:'한샘',site:'최윤아 현장',cust:'최윤아',mgr:'김민섭',amt:1200000,date:'2026.05.26',status:'발주요청',receipt:false},
-  {vendor:'LG하우시스',site:'박지우 현장',cust:'박지우',mgr:'한민재',amt:425000,date:'2026.05.15',status:'납품완료',receipt:false},
-];
-let customers=[
-  {name:'이하준',phone:'010-1234-5678',mgr:'김민섭',addr:'고양시 일산동구 정발산로 22-5',src:'소개',status:'공사중',date:'2026.03.12'},
-  {name:'박지우',phone:'010-9876-5432',mgr:'한민재',addr:'고양시 덕양구 화정로 88',src:'SNS',status:'공사중',date:'2026.04.01'},
-  {name:'이서준',phone:'010-5555-1234',mgr:'김민섭',addr:'파주시 금촌동 101-3',src:'블로그',status:'상담중',date:'2026.01.20'},
-  {name:'최윤아',phone:'010-7777-8888',mgr:'한민재',addr:'고양시 일산서구 탄현동 44',src:'오늘의집',status:'상담종료',date:'2026.05.15'},
-  {name:'정하늘',phone:'010-3333-4444',mgr:'김민섭',addr:'고양시 일산동구 마두동 13',src:'SNS',status:'공사완료',date:'2026.02.10'},
-];
-let proposals=[
-  {title:'이하준 — 거실+주방 인테리어 제안서',cust:'이하준',mgr:'김민섭',date:'2026.05.10',amt:8500000,status:'계약완료',file:true,pinned:false},
-  {title:'박지우 — 전체 리모델링 제안서',cust:'박지우',mgr:'한민재',date:'2026.04.28',amt:15000000,status:'계약완료',file:false,pinned:false},
-  {title:'정하늘 — 원룸 패키지 제안서',cust:'정하늘',mgr:'김민섭',date:'2026.05.27',amt:6200000,status:'견적발송',file:false,pinned:false},
-];
-const vendors=[
-  {name:'(주)대성타일',field:'타일',mgr:'김대성',phone:'031-000-1111',sites:'이하준, 박지우',price:'보통'},
-  {name:'삼화위생',field:'욕실',mgr:'이삼화',phone:'031-000-2222',sites:'이서준',price:'저가'},
-  {name:'LG하우시스',field:'도배',mgr:'박수진',phone:'02-000-3333',sites:'박지우',price:'고가'},
-  {name:'한샘',field:'가구',mgr:'최한솔',phone:'031-000-4444',sites:'최윤아',price:'고가'},
-];
+let consultList=[];
+let siteList=[];
+let siteLogs=[];
+let estimates=[];
+let contracts=[];
+let vpList=[];
+let profits=[];
+let payments=[];
+let orders=[];
+let customers=[];
+let proposals=[];
+let vendors=[];
 function mkd(plus){const d=new Date();d.setDate(d.getDate()+plus);return d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');}
-let siteplans=[
-  {site:'이하준 현장',type:'현장방문',date:mkd(3),mgr:'김민섭',content:'중간 검수 및 고객 확인',done:false},
-  {site:'박지우 현장',type:'자재미팅',date:mkd(5),mgr:'한민재',content:'도배지 입고 및 현장 확인',done:false},
-  {site:'이서준 현장',type:'실측',date:mkd(10),mgr:'김민섭',content:'최종 준공 검수',done:false},
-  {site:'최윤아 현장',type:'사무실 상담',date:mkd(18),mgr:'한민재',content:'최종 계약서 서명',done:false},
-];
+let siteplans=[];
 
 let curCostIdx=-1, curTodoFilter='all';
 let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
@@ -800,6 +735,21 @@ function filterTodo(type,el){curTodoFilter=type;document.querySelectorAll('#page
 
 // ===== RENDERS =====
 function render(){
+  // 홈 통계 카드 동적 업데이트
+  const activeSites = siteList.filter(s => s.status === '진행중').length;
+  const el_as = document.getElementById('stat-active-sites');
+  if (el_as) el_as.innerHTML = activeSites + '<span class="unit">곳</span>';
+
+  const thisMonth = new Date().getFullYear() + '.' + String(new Date().getMonth()+1).padStart(2,'0');
+  const monthRev = payments.filter(p => p.type==='입금' && (p.date||'').startsWith(thisMonth)).reduce((a,p)=>a+p.amt,0);
+  const monthCost = payments.filter(p => p.type==='출금' && (p.date||'').startsWith(thisMonth)).reduce((a,p)=>a+p.amt,0);
+  const el_rev = document.getElementById('stat-month-rev');
+  if (el_rev) el_rev.innerHTML = Math.round(monthRev/10000).toLocaleString() + '<span class="unit">만원</span>';
+  const el_cost = document.getElementById('stat-month-cost');
+  if (el_cost) el_cost.innerHTML = Math.round(monthCost/10000).toLocaleString() + '<span class="unit">만원</span>';
+  const el_sub = document.getElementById('stat-month-rev-sub');
+  if (el_sub) el_sub.textContent = monthRev > 0 ? '순이익 ' + Math.round((monthRev-monthCost)/10000).toLocaleString() + '만원' : '—';
+
   const hs=document.getElementById('home-sites');if(hs){const active=siteList.filter(s=>s.status==='진행중');if(!active.length){hs.innerHTML='<tr><td colspan="4" style="text-align:center;color:var(--text3);padding:16px;font-size:12px">진행중인 현장이 없습니다.</td></tr>';}else{hs.innerHTML=active.map(s=>`<tr><td style="font-weight:600">${lnk(s.name)}</td><td>${s.type||'—'}</td><td>${s.mgr}</td><td>${s.addr||'—'}</td><td>${bd('진행중')}</td></tr>`).join('');}}
   renderTodo();updateMissing();renderPinBar();renderConsult();renderGongjung();renderPlan();renderSL();renderEst();renderContract();renderVP();renderProfit();renderPay();renderOrder();renderVendors();renderCust();renderProp();renderCal();renderDocs();
 }
@@ -1099,7 +1049,7 @@ function goToTodayCalendar(){
 }
 
 // ===== LOCALSTORAGE 자동저장 =====
-const LS_VERSION = '1.0';
+const LS_VERSION = '2.0'; // 버전 변경 시 기존 저장 데이터 초기화
 const LS_KEYS = ['consultList','siteList','siteLogs','estimates','contracts','vpList','profits','payments','orders','proposals','siteplans','vendors','docList','customerDB'];
 
 function saveToLS() {
@@ -1122,7 +1072,15 @@ function saveToLS() {
 
 function loadFromLS() {
   try {
-    if (!localStorage.getItem('haeso_ver')) return false;
+    const savedVer = localStorage.getItem('haeso_ver');
+    if (!savedVer) return false;
+    // 버전이 다르면 기존 데이터 전부 삭제
+    if (savedVer !== LS_VERSION) {
+      LS_KEYS.forEach(k => localStorage.removeItem('haeso_' + k));
+      localStorage.removeItem('haeso_ver');
+      console.log('버전 변경 — 기존 데이터 초기화');
+      return false;
+    }
     LS_KEYS.forEach(k => {
       const raw = localStorage.getItem('haeso_' + k);
       if (raw) {
