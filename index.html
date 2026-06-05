@@ -251,7 +251,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
   <div class="home-grid">
     <div class="card">
       <div class="card-h">
-        <span class="card-t"><i class="ti ti-bell"></i> 챙겨야 할 일 <span style="font-size:10px;color:var(--text3);font-weight:400">(현장별 일정 연동)</span></span>
+        <span class="card-t"><i class="ti ti-bell"></i> 챙겨야 할 일 <span style="font-size:10px;color:var(--text3);font-weight:400">(현장별 일정 + 상담 일정 연동)</span></span>
         <div style="display:flex;gap:5px">
           <button class="fb on" onclick="filterTodo('all',this)">전체</button>
           <button class="fb" onclick="filterTodo('urgent',this)" style="color:var(--red-t);border-color:#f0b0b0">긴급</button>
@@ -811,15 +811,49 @@ function togglePin(idx){proposals[idx].pinned=!proposals[idx].pinned;renderPinBa
 function renderPinBar(){const pinned=proposals.filter(p=>p.pinned);const bar=document.getElementById('pinned-bar');const items=document.getElementById('pinned-items');if(!pinned.length){bar.style.display='none';return;}bar.style.display='flex';items.innerHTML=pinned.map(p=>{const ri=proposals.indexOf(p);return`<div class="pin-item" onclick="viewFile('${p.title}')"><i class="ti ti-file-text"></i><span>${p.cust} — ${p.title.replace(' 제안서','')}</span><button class="pin-rm" onclick="event.stopPropagation();togglePin(${ri})"><i class="ti ti-x"></i></button></div>`;}).join('');}
 
 // ===== TODO =====
-function renderTodo(){const el=document.getElementById('todo-list');const active=siteplans.filter(p=>{if(p.done)return false;const u=urgency(p.date);return u==='긴급'||u==='여유';});let filtered=active;if(curTodoFilter==='urgent')filtered=active.filter(p=>urgency(p.date)==='긴급');if(curTodoFilter==='easy')filtered=active.filter(p=>urgency(p.date)==='여유');if(!filtered.length){el.innerHTML='<div style="padding:20px 16px;font-size:12px;color:var(--text3);text-align:center">현재 긴급·여유 항목이 없습니다.</div>';const st=document.getElementById('stat-today');if(st)st.innerHTML='0<span class="unit">건</span>';return;}el.innerHTML=filtered.map(p=>{const idx=siteplans.indexOf(p);const u=urgency(p.date);const dl=getDL(p.date);return`<div class="todo-row"><div class="chk" onclick="completePlanTodo(${idx},this)"></div><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.site} — ${p.content}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${p.mgr} · ${p.date} · <b style="color:${u==='긴급'?'var(--red)':'var(--blue-t)'}">D-${Math.max(0,dl)}</b></div></div><span class="${u==='긴급'?'tag-u':'tag-e'}">${u}</span></div>`;}).join('');const todayStr=mkd(0);
-const planToday=siteplans.filter(p=>p.date===todayStr&&!p.done).length;
-const consultToday=consultList.filter(c=>{if(!c.consultDate)return false;return c.consultDate.replace(/-/g,'.').slice(0,10)===todayStr;}).length;
-const todayCnt=planToday+consultToday;
-const st=document.getElementById('stat-today');
-if(st)st.innerHTML=todayCnt+'<span class="unit">건</span>';
-const sub=document.getElementById('stat-today-sub');
-if(sub){const parts=[];if(planToday)parts.push('현장일정 '+planToday+'건');if(consultToday)parts.push('상담 '+consultToday+'건');sub.textContent=parts.length?parts.join(' · '):'오늘 일정 없음';}}
+function renderTodo(){
+  const el=document.getElementById('todo-list');
+  // 현장별 일정: 긴급/여유인 것
+  const activePlans=siteplans.filter(p=>{if(p.done)return false;const u=urgency(p.date);return u==='긴급'||u==='여유';});
+  // 상담 일정: 예정 상태이고 상담일이 있는 것 (긴급/여유 판단)
+  const activeConsults=consultList.filter(c=>{if(c.status==='완료'||!c.consultDate)return false;const cd=c.consultDate.replace(/-/g,'.').slice(0,10);const u=urgency(cd);return u==='긴급'||u==='여유';});
+  // 합치기
+  let allItems=[
+    ...activePlans.map(p=>({type:'plan',data:p,date:p.date,u:urgency(p.date),idx:siteplans.indexOf(p)})),
+    ...activeConsults.map(c=>({type:'consult',data:c,date:c.consultDate.replace(/-/g,'.').slice(0,10),u:urgency(c.consultDate.replace(/-/g,'.').slice(0,10)),idx:consultList.indexOf(c)}))
+  ];
+  // 날짜 순 정렬
+  allItems.sort((a,b)=>getDL(a.date)-getDL(b.date));
+  let filtered=allItems;
+  if(curTodoFilter==='urgent')filtered=allItems.filter(i=>i.u==='긴급');
+  if(curTodoFilter==='easy')filtered=allItems.filter(i=>i.u==='여유');
+  if(!filtered.length){
+    el.innerHTML='<div style="padding:20px 16px;font-size:12px;color:var(--text3);text-align:center">현재 긴급·여유 항목이 없습니다.</div>';
+    const st=document.getElementById('stat-today');if(st)st.innerHTML='0<span class="unit">건</span>';
+    return;
+  }
+  el.innerHTML=filtered.map(item=>{
+    const u=item.u;const dl=getDL(item.date);
+    if(item.type==='plan'){
+      const p=item.data;const idx=item.idx;
+      return`<div class="todo-row"><div class="chk" onclick="completePlanTodo(${idx},this)"></div><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.site} — ${p.content}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${p.mgr} · ${p.date} · <b style="color:${u==='긴급'?'var(--red)':'var(--blue-t)'}">D-${Math.max(0,dl)}</b></div></div><span class="bd bd-green" style="font-size:9px;margin-right:4px">현장</span><span class="${u==='긴급'?'tag-u':'tag-e'}">${u}</span></div>`;
+    } else {
+      const c=item.data;const idx=item.idx;
+      const timeStr=c.consultDate&&c.consultDate.split(' ')[1]?c.consultDate.split(' ')[1]:'';
+      return`<div class="todo-row"><div class="chk" onclick="completeConsultTodo(${idx},this)"></div><div style="flex:1;min-width:0"><div style="font-size:12px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${c.name} — ${c.type}${timeStr?' ('+timeStr+')':''}</div><div style="font-size:10px;color:var(--text3);margin-top:2px">${c.mgr} · ${item.date}${timeStr?' '+timeStr:''} · <b style="color:${u==='긴급'?'var(--red)':'var(--blue-t)'}">D-${Math.max(0,dl)}</b></div></div><span class="bd bd-purple" style="font-size:9px;margin-right:4px">상담</span><span class="${u==='긴급'?'tag-u':'tag-e'}">${u}</span></div>`;
+    }
+  }).join('');
+  const todayStr=mkd(0);
+  const planToday=siteplans.filter(p=>p.date===todayStr&&!p.done).length;
+  const consultToday=consultList.filter(c=>{if(!c.consultDate)return false;return c.consultDate.replace(/-/g,'.').slice(0,10)===todayStr;}).length;
+  const todayCnt=planToday+consultToday;
+  const st=document.getElementById('stat-today');
+  if(st)st.innerHTML=todayCnt+'<span class="unit">건</span>';
+  const sub=document.getElementById('stat-today-sub');
+  if(sub){const parts=[];if(planToday)parts.push('현장일정 '+planToday+'건');if(consultToday)parts.push('상담 '+consultToday+'건');sub.textContent=parts.length?parts.join(' · '):'오늘 일정 없음';}
+}
 function completePlanTodo(idx,el){el.classList.add('done');el.innerHTML='<i class="ti ti-check"></i>';siteplans[idx].done=true;setTimeout(()=>{renderTodo();renderPlan();},400);}
+function completeConsultTodo(idx,el){el.classList.add('done');el.innerHTML='<i class="ti ti-check"></i>';consultList[idx].status='완료';triggerSave();setTimeout(()=>{renderTodo();renderConsult();},400);}
 function filterTodo(type,el){curTodoFilter=type;document.querySelectorAll('#page-home .fb').forEach(b=>b.classList.remove('on'));el.classList.add('on');renderTodo();}
 
 // ===== RENDERS =====
