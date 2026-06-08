@@ -149,15 +149,23 @@ async function uploadToCloud(file, onProgress) {
   fd.append('file', file);
   fd.append('upload_preset', CLD_PRESET);
   fd.append('folder', 'haeso');
+  fd.append('access_mode', 'public');
+  // 파일 타입에 따라 리소스 타입 결정
+  const isImage = file.type.startsWith('image/');
+  const isPDF = file.type === 'application/pdf';
+  const resourceType = isImage ? 'image' : 'raw';
   try {
-    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLD_CLOUD}/auto/upload`, {
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLD_CLOUD}/${resourceType}/upload`, {
       method: 'POST', body: fd
     });
-    if (!res.ok) throw new Error('업로드 실패');
+    if (!res.ok) throw new Error('업로드 실패: ' + res.status);
     const data = await res.json();
-    return data.secure_url; // 누구나 접근 가능한 URL
+    if (data.error) throw new Error(data.error.message);
+    // raw 파일은 fl_attachment 없이 직접 URL 사용
+    return data.secure_url;
   } catch(e) {
     console.error('Cloudinary 업로드 오류:', e);
+    alert('파일 업로드 실패: ' + e.message + '\n다시 시도해주세요.');
     return null;
   }
 }
