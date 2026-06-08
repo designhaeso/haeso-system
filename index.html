@@ -137,6 +137,199 @@
     window.fsListen();
   });
 </script>
+
+<script>
+// ===== CLOUDINARY 파일 공유 시스템 =====
+const CLD_CLOUD = 'dunpxacjf';
+const CLD_PRESET = 'haeso-upload';
+
+// 파일을 Cloudinary에 업로드하고 공개 URL 반환
+async function uploadToCloud(file, onProgress) {
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('upload_preset', CLD_PRESET);
+  fd.append('folder', 'haeso');
+  try {
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLD_CLOUD}/auto/upload`, {
+      method: 'POST', body: fd
+    });
+    if (!res.ok) throw new Error('업로드 실패');
+    const data = await res.json();
+    return data.secure_url; // 누구나 접근 가능한 URL
+  } catch(e) {
+    console.error('Cloudinary 업로드 오류:', e);
+    return null;
+  }
+}
+
+// 업로드 진행 표시
+function showUploadProgress(label) {
+  const ind = document.getElementById('ls-indicator');
+  if (ind) { ind.textContent = '📤 ' + (label||'파일') + ' 업로드 중...'; ind.style.color = 'var(--amber)'; }
+}
+function hideUploadProgress() {
+  const ind = document.getElementById('ls-indicator');
+  if (ind) { setTimeout(()=>{ ind.textContent = '저장됨'; ind.style.color = 'var(--text3)'; }, 1500); }
+}
+
+// DropZone에서 파일 선택 시 Cloudinary 업로드 후 URL 저장
+async function dzUploadAndStore(file, dzId) {
+  showUploadProgress(file.name);
+  const url = await uploadToCloud(file);
+  hideUploadProgress();
+  if (!url) { alert('파일 업로드에 실패했습니다. 다시 시도해주세요.'); return null; }
+  // dzId별로 pending URL 저장 (공유 가능한 클라우드 URL)
+  window._cloudURLs = window._cloudURLs || {};
+  window._cloudURLs[dzId] = url;
+  return url;
+}
+
+// 기존 dzChange 교체: Cloudinary 업로드 포함
+window.dzChangeCloud = async function(e, dz, chip) {
+  const f = e.target.files;
+  if (!f.length) return;
+  showChip(chip, f[0].name + ' (업로드 중...)', dz);
+  const url = await dzUploadAndStore(f[0], dz);
+  if (url) {
+    showChip(chip, f[0].name, dz);
+    // 기존 pending 방식 호환
+    if (dz==='ew-dz') window._pendingFileURL = url;
+    if (dz==='ct-dz') window._pendingCtFileURL = url;
+    if (dz==='doc-dz') window._pendingDocFileURL = url;
+    if (dz==='pay-dz') window._pendingPayFileURL = url;
+    if (dz==='cr-plan-dz') window._pendingCrPlanURL = url;
+    if (dz==='ecu-plan-dz') window._pendingEcuPlanURL = url;
+    if (dz==='no-dz') window._pendingOrderURL = url;
+    fileURLMap[f[0].name] = url;
+  } else {
+    removeChip(chip, dz);
+  }
+};
+
+window.dzDropCloud = async function(e, dz, chip) {
+  e.preventDefault(); dzLeave(dz);
+  const f = e.dataTransfer.files;
+  if (!f.length) return;
+  showChip(chip, f[0].name + ' (업로드 중...)', dz);
+  const url = await dzUploadAndStore(f[0], dz);
+  if (url) {
+    showChip(chip, f[0].name, dz);
+    if (dz==='ew-dz') window._pendingFileURL = url;
+    if (dz==='ct-dz') window._pendingCtFileURL = url;
+    if (dz==='doc-dz') window._pendingDocFileURL = url;
+    if (dz==='pay-dz') window._pendingPayFileURL = url;
+    if (dz==='cr-plan-dz') window._pendingCrPlanURL = url;
+    if (dz==='ecu-plan-dz') window._pendingEcuPlanURL = url;
+    if (dz==='no-dz') window._pendingOrderURL = url;
+    fileURLMap[f[0].name] = url;
+  } else {
+    removeChip(chip, dz);
+  }
+};
+
+// inlineAttach: Cloudinary 업로드 후 URL 저장
+window.inlineAttachCloud = async function(btn, label, dt, idx) {
+  const inp = document.createElement('input');
+  inp.type = 'file';
+  inp.accept = 'image/*,.pdf,.xlsx,.xls';
+  inp.onchange = async (e) => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    btn.innerHTML = '<i class="ti ti-loader"></i> 업로드 중...';
+    btn.disabled = true;
+    showUploadProgress(file.name);
+    const url = await uploadToCloud(file);
+    btn.disabled = false;
+    hideUploadProgress();
+    if (!url) { btn.innerHTML = '<i class="ti ti-paperclip"></i> 첨부'; alert('업로드 실패. 다시 시도해주세요.'); return; }
+    fileURLMap[label] = url;
+    btn.className = 'rcp-btn has';
+    btn.innerHTML = '<i class="ti ti-file-check"></i> 보기';
+    btn.onclick = () => window.open(url, '_blank');
+    if (dt==='pay'&&payments[idx]) { payments[idx].receipt=true; payments[idx].receiptURL=url; }
+    if (dt==='order'&&orders[idx]) { orders[idx].receipt=true; orders[idx].receiptURL=url; }
+    if (dt==='est-file'&&estimates[idx]) { estimates[idx].file=true; estimates[idx].fileURL=url; renderEst(); }
+    if (dt==='ct-file'&&contracts[idx]) { contracts[idx].file=true; contracts[idx].fileURL=url; renderContract(); }
+    if (dt==='vp-file'&&vpList[idx]) { vpList[idx].file=true; vpList[idx].fileURL=url; renderVP(); }
+    if (dt==='gj-file'&&siteList[idx]) { siteList[idx].file=true; siteList[idx].fileURL=url; renderGongjung(); }
+    if (dt==='prop-file'&&proposals[idx]) { proposals[idx].file=true; proposals[idx].fileURL=url; renderProp(); }
+    updateMissing(); triggerSave();
+  };
+  inp.click();
+};
+
+// 하자 사진 업로드
+window.addPThumbCloud = async function(gId, file) {
+  const tempURL = URL.createObjectURL(file);
+  const g = document.getElementById(gId);
+  const d = document.createElement('div');
+  d.className = 'photo-thumb';
+  d.innerHTML = '<img src="'+tempURL+'"><div class="ph-ov"><i class="ti ti-loader"></i></div>';
+  g.appendChild(d);
+  const url = await uploadToCloud(file);
+  if (url) {
+    d.querySelector('img').src = url;
+    d.querySelector('.ph-ov').innerHTML = '<i class="ti ti-eye"></i>';
+    d.onclick = () => window.open(url, '_blank');
+  }
+};
+
+// VP 사진 업로드
+window.addVpPhotoCloud = async function(file) {
+  const tempURL = URL.createObjectURL(file);
+  if (!window._vpPendingPhotos) window._vpPendingPhotos = [];
+  const idx = window._vpPendingPhotos.length;
+  window._vpPendingPhotos.push(tempURL); // 임시 미리보기
+  renderVpPhotoGrid('vp-photo-grid', window._vpPendingPhotos);
+  const url = await uploadToCloud(file);
+  if (url) {
+    window._vpPendingPhotos[idx] = url;
+    renderVpPhotoGrid('vp-photo-grid', window._vpPendingPhotos);
+  }
+  const cnt = document.getElementById('vp-photo-count');
+  if (cnt) { cnt.textContent = window._vpPendingPhotos.length + '장 업로드됨'; cnt.style.display = 'block'; }
+};
+
+// 지출 영수증 첨부 (Cloudinary)
+window.attachCostFileCloud = async function(pi, ci, btn) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = 'image/*,.pdf';
+  inp.onchange = async (e) => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    btn.innerHTML = '<i class="ti ti-loader"></i> 업로드 중...';
+    btn.disabled = true;
+    const url = await uploadToCloud(file);
+    btn.disabled = false;
+    if (!url) { btn.innerHTML = '<i class="ti ti-paperclip"></i> 첨부'; alert('업로드 실패'); return; }
+    profits[pi].costs[ci].receipt = true;
+    profits[pi].costs[ci].receiptURL = url;
+    btn.className = 'rcp-btn has';
+    btn.innerHTML = '<i class="ti ti-file-check"></i> 보기';
+    btn.onclick = () => window.open(url, '_blank');
+    updateMissing(); triggerSave();
+  };
+  inp.click();
+};
+
+// 서류양식 첨부 (Cloudinary)
+window.attachDocCloud = async function(i) {
+  const inp = document.createElement('input');
+  inp.type = 'file'; inp.accept = '.xlsx,.xls,.pdf,.docx,.hwp';
+  inp.onchange = async (e) => {
+    if (!e.target.files.length) return;
+    const file = e.target.files[0];
+    showUploadProgress(file.name);
+    const url = await uploadToCloud(file);
+    hideUploadProgress();
+    if (!url) { alert('업로드 실패'); return; }
+    docList[i].file = true; docList[i].fname = file.name; docList[i].fileURL = url;
+    renderDocs(); triggerSave();
+  };
+  inp.click();
+};
+</script>
+
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{height:100%;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;font-size:13px;background:#f4f5f7;color:#1a1a1a}
@@ -417,7 +610,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
   <div class="card" style="max-width:500px"><div class="card-h"><span class="card-t"><i class="ti ti-file-plus"></i> 견적 작성</span></div>
   <div style="padding:20px">
     <div class="fg"><label class="fl"><i class="ti ti-file-spreadsheet" style="color:var(--acc);font-size:13px;vertical-align:-1px"></i> 첨부 <span style="color:var(--red)">*</span></label>
-      <div class="drop-zone" id="ew-dz" ondragover="dzOver(event,'ew-dz')" ondragleave="dzLeave('ew-dz')" ondrop="dzDrop(event,'ew-dz','ew-chip')"><input type="file" accept=".xlsx,.xls" onchange="dzChange(event,'ew-dz','ew-chip')"><i class="ti ti-file-spreadsheet"></i><p>엑셀 파일을 끌어다 놓거나 클릭하여 선택</p><div class="hint">.xlsx 형식</div></div>
+      <div class="drop-zone" id="ew-dz" ondragover="dzOver(event,'ew-dz')" ondragleave="dzLeave('ew-dz')" ondrop="dzDropCloud(event,'ew-dz','ew-chip')"><input type="file" accept=".xlsx,.xls" onchange="dzChangeCloud(event,'ew-dz','ew-chip')"><i class="ti ti-file-spreadsheet"></i><p>엑셀 파일을 끌어다 놓거나 클릭하여 선택</p><div class="hint">.xlsx 형식</div></div>
       <div id="ew-chip" style="display:none"></div></div>
     <div class="fg"><label class="fl">고객명</label><input type="text" id="ew-cust" placeholder="이름 입력 시 자동완성" autocomplete="off"></div>
     <div class="fg"><label class="fl">현장 주소</label><input type="text" id="ew-addr" placeholder="고객명 입력 시 자동입력"></div>
@@ -553,8 +746,8 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
       <div class="fg"><label class="fl">유입 경로</label><select id="cr-src"><option value="">선택</option><option>SNS</option><option>블로그</option><option>오늘의집</option><option>소개</option></select></div>
       <div class="fg">
         <label class="fl"><i class="ti ti-map-2" style="font-size:12px;vertical-align:-1px;color:var(--acc)"></i> 평면도 첨부 <span style="font-size:10px;color:var(--text3)">(선택)</span></label>
-        <div class="drop-zone" id="cr-plan-dz" ondragover="dzOver(event,'cr-plan-dz')" ondragleave="dzLeave('cr-plan-dz')" ondrop="dzDrop(event,'cr-plan-dz','cr-plan-chip')">
-          <input type="file" accept="image/*,.pdf,.dwg,.dxf" onchange="dzChange(event,'cr-plan-dz','cr-plan-chip');if(event.target.files[0])window._pendingCrPlanURL=URL.createObjectURL(event.target.files[0])">
+        <div class="drop-zone" id="cr-plan-dz" ondragover="dzOver(event,'cr-plan-dz')" ondragleave="dzLeave('cr-plan-dz')" ondrop="dzDropCloud(event,'cr-plan-dz','cr-plan-chip')">
+          <input type="file" accept="image/*,.pdf,.dwg,.dxf" onchange="dzChangeCloud(event,'cr-plan-dz','cr-plan-chip')">
           <i class="ti ti-map-2"></i>
           <p>평면도를 끌어다 놓거나 클릭하여 선택</p>
           <div class="hint">이미지, PDF, DWG 등</div>
@@ -620,7 +813,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
       <div class="fg"><label class="fl">설명</label><input type="text" id="doc-desc" placeholder="간단한 설명..."></div>
       <div class="fg">
         <label class="fl"><i class="ti ti-paperclip" style="font-size:12px;vertical-align:-1px"></i> 파일 첨부</label>
-        <div class="drop-zone" id="doc-dz" ondragover="dzOver(event,'doc-dz')" ondragleave="dzLeave('doc-dz')" ondrop="dzDrop(event,'doc-dz','doc-chip')"><input type="file" id="doc-file-inp" accept=".xlsx,.xls,.pdf,.docx,.hwp" onchange="dzChange(event,'doc-dz','doc-chip')"><i class="ti ti-file-spreadsheet"></i><p>파일을 끌어다 놓거나 클릭하여 선택</p><div class="hint">엑셀, PDF, Word, 한글 등</div></div>
+        <div class="drop-zone" id="doc-dz" ondragover="dzOver(event,'doc-dz')" ondragleave="dzLeave('doc-dz')" ondrop="dzDropCloud(event,'doc-dz','doc-chip')"><input type="file" id="doc-file-inp" accept=".xlsx,.xls,.pdf,.docx,.hwp" onchange="dzChangeCloud(event,'doc-dz','doc-chip')"><i class="ti ti-file-spreadsheet"></i><p>파일을 끌어다 놓거나 클릭하여 선택</p><div class="hint">엑셀, PDF, Word, 한글 등</div></div>
         <div id="doc-chip" style="display:none"></div>
       </div>
       <div style="display:flex;gap:8px"><button class="btn btn-g" onclick="saveDoc()"><i class="ti ti-device-floppy"></i> 등록</button><button class="btn" onclick="clearDocForm()">초기화</button></div>
@@ -681,7 +874,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
     <div class="g3"><div class="fg"><label class="fl">고객명</label><input type="text" id="no-cust"></div><div class="fg"><label class="fl">발주자</label><select id="no-mgr"><option>김민섭</option><option>한민재</option></select></div><div class="fg"><label class="fl">금액 (원)</label><input type="number" id="no-amt"></div></div>
     <div class="fg"><label class="fl">발주일</label><input type="date" id="no-date" class="date-pick"></div>
     <div class="fg"><label class="fl"><i class="ti ti-file-invoice" style="font-size:12px;vertical-align:-1px"></i> 영수증 <span style="color:var(--red)">*</span></label>
-      <div class="drop-zone" id="no-dz" ondragover="dzOver(event,'no-dz')" ondragleave="dzLeave('no-dz')" ondrop="dzDrop(event,'no-dz','no-chip')"><input type="file" accept="image/*,.pdf" onchange="dzChange(event,'no-dz','no-chip')"><i class="ti ti-file-invoice"></i><p>영수증을 끌어다 놓거나 클릭하여 선택</p><div class="hint">JPG·PNG 또는 PDF</div></div>
+      <div class="drop-zone" id="no-dz" ondragover="dzOver(event,'no-dz')" ondragleave="dzLeave('no-dz')" ondrop="dzDropCloud(event,'no-dz','no-chip')"><input type="file" accept="image/*,.pdf" onchange="dzChangeCloud(event,'no-dz','no-chip')"><i class="ti ti-file-invoice"></i><p>영수증을 끌어다 놓거나 클릭하여 선택</p><div class="hint">JPG·PNG 또는 PDF</div></div>
       <div id="no-chip" style="display:none"></div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeM('modal-add-order')">취소</button><button class="btn btn-g" onclick="saveOrder()"><i class="ti ti-device-floppy"></i> 등록</button></div>
   </div>
@@ -696,7 +889,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
     <div class="g2"><div class="fg"><label class="fl">상태</label><select id="pay-status-sel"><option>요청</option><option>완료</option></select></div><div class="fg"><label class="fl">부가세</label><select id="pay-vat-sel"><option>미발행</option><option>발행</option></select></div></div>
     <div class="fg"><label class="fl">메모</label><input type="text" id="pay-memo-inp" placeholder="계약금, 중도금, 잔금..."></div>
     <div class="fg"><label class="fl"><i class="ti ti-file-invoice" style="font-size:12px;vertical-align:-1px"></i> 영수증 <span style="color:var(--red)">*</span></label>
-      <div class="drop-zone" id="pay-dz" ondragover="dzOver(event,'pay-dz')" ondragleave="dzLeave('pay-dz')" ondrop="dzDrop(event,'pay-dz','pay-chip')"><input type="file" accept="image/*,.pdf" onchange="dzChange(event,'pay-dz','pay-chip')"><i class="ti ti-file-invoice"></i><p>영수증을 끌어다 놓거나 클릭하여 선택</p><div class="hint">JPG·PNG 또는 PDF</div></div>
+      <div class="drop-zone" id="pay-dz" ondragover="dzOver(event,'pay-dz')" ondragleave="dzLeave('pay-dz')" ondrop="dzDropCloud(event,'pay-dz','pay-chip')"><input type="file" accept="image/*,.pdf" onchange="dzChangeCloud(event,'pay-dz','pay-chip')"><i class="ti ti-file-invoice"></i><p>영수증을 끌어다 놓거나 클릭하여 선택</p><div class="hint">JPG·PNG 또는 PDF</div></div>
       <div id="pay-chip" style="display:none"></div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeM('modal-add-pay')">취소</button><button class="btn btn-g" onclick="savePay()"><i class="ti ti-device-floppy"></i> 저장</button></div>
   </div>
@@ -721,7 +914,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
     <div class="fg"><label class="fl">계약일</label><input type="date" id="ct-date" class="date-pick"></div>
     <div class="fg"><label class="fl">현장 주소</label><input type="text" id="ct-addr"></div>
     <div class="fg"><label class="fl"><i class="ti ti-file-spreadsheet" style="font-size:12px;vertical-align:-1px"></i> 첨부 <span style="color:var(--red)">*</span></label>
-      <div class="drop-zone" id="ct-dz" ondragover="dzOver(event,'ct-dz')" ondragleave="dzLeave('ct-dz')" ondrop="dzDrop(event,'ct-dz','ct-chip')"><input type="file" accept=".xlsx,.xls" onchange="dzChange(event,'ct-dz','ct-chip')"><i class="ti ti-file-spreadsheet"></i><p>계약서 엑셀을 끌어다 놓거나 클릭하여 선택</p><div class="hint">.xlsx 형식</div></div>
+      <div class="drop-zone" id="ct-dz" ondragover="dzOver(event,'ct-dz')" ondragleave="dzLeave('ct-dz')" ondrop="dzDropCloud(event,'ct-dz','ct-chip')"><input type="file" accept=".xlsx,.xls" onchange="dzChangeCloud(event,'ct-dz','ct-chip')"><i class="ti ti-file-spreadsheet"></i><p>계약서 엑셀을 끌어다 놓거나 클릭하여 선택</p><div class="hint">.xlsx 형식</div></div>
       <div id="ct-chip" style="display:none"></div></div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn" onclick="closeM('modal-add-contract')">취소</button><button class="btn btn-g" onclick="saveContract()"><i class="ti ti-device-floppy"></i> 저장</button></div>
   </div>
@@ -840,7 +1033,7 @@ function urgency(s){const n=getDL(s);if(n<0)return'지남';if(n<=7)return'긴급
 const BDM={'공사중':'bd-green','진행중':'bd-green','마무리':'bd-blue','착공':'bd-amber','상담중':'bd-amber','완료':'bd-gray','공사완료':'bd-gray','상담종료':'bd-gray','납품완료':'bd-green','발주요청':'bd-amber','계약완료':'bd-teal','검토중':'bd-amber','견적발송':'bd-blue','대면상담':'bd-purple','임시저장':'bd-gray','예정':'bd-blue','여유':'bd-blue','긴급':'bd-red','지남':'bd-gray','입금':'bd-teal','출금':'bd-amber','고가':'bd-amber','저가':'bd-teal','보통':'bd-gray','현장방문':'bd-green','자재미팅':'bd-amber','실측':'bd-blue','사무실 상담':'bd-purple','실측 상담':'bd-blue','기타':'bd-gray','포함':'bd-teal','미포함':'bd-amber','SNS':'bd-purple','블로그':'bd-blue','오늘의집':'bd-green','소개':'bd-teal','타일':'bd-green','도배':'bd-teal','욕실':'bd-blue','가구':'bd-amber','바닥':'bd-green','전기':'bd-amber','목공':'bd-teal','철거':'bd-gray','설비':'bd-blue','샷시':'bd-blue','필름':'bd-purple','공조':'bd-purple','공사진행중':'bd-blue'};
 function bd(s){return`<span class="bd ${BDM[s]||'bd-gray'}">${s}</span>`;}
 function lnk(n){return`<span class="lnk">${n}</span>`;}
-function rcpBtn(has,label,idx,dt){if(has)return`<button class="rcp-btn has" onclick="viewFile('${label}')"><i class="ti ti-file-invoice"></i> 보기</button>`;return`<button class="rcp-btn" onclick="inlineAttach(this,'${label}','${dt}',${idx})"><i class="ti ti-paperclip"></i> 첨부</button>`;}
+function rcpBtn(has,label,idx,dt,url){if(has){const u=url||fileURLMap[label];if(u)return`<button class="rcp-btn has" onclick="window.open('${u}','_blank')"><i class="ti ti-file-check"></i> 보기</button>`;return`<button class="rcp-btn has" onclick="viewFile('${label}')"><i class="ti ti-file-invoice"></i> 보기</button>`;}return`<button class="rcp-btn" onclick="inlineAttachCloud(this,'${label}','${dt}',${idx})"><i class="ti ti-paperclip"></i> 첨부</button>`;}
 function xlsBtn(label){return`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="viewFile('${label}')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`;}
 
 // ===== DRAG-DROP =====
@@ -850,8 +1043,8 @@ function dzDrop(e,dz,chip){e.preventDefault();dzLeave(dz);const f=e.dataTransfer
 function dzChange(e,dz,chip){const f=e.target.files;if(f.length){showChip(chip,f[0].name,dz);storeFileURL(f[0].name,f[0]);if(dz==='ew-dz')window._pendingFileURL=URL.createObjectURL(f[0]);if(dz==='ct-dz')window._pendingCtFileURL=URL.createObjectURL(f[0]);if(dz==='vp-dz')window._pendingVpFileURL=URL.createObjectURL(f[0]);if(dz==='doc-dz')window._pendingDocFileURL=URL.createObjectURL(f[0]);if(dz==='pay-dz')window._pendingPayFileURL=URL.createObjectURL(f[0]);if(dz==='cr-plan-dz')window._pendingCrPlanURL=URL.createObjectURL(f[0]);if(dz==='ecu-plan-dz')window._pendingEcuPlanURL=URL.createObjectURL(f[0]);}}
 function showChip(chipId,fname,dzId){const el=document.getElementById(chipId);el.innerHTML=`<div class="file-chip"><i class="ti ti-file-check" style="font-size:14px"></i>${fname}<button class="rm" onclick="removeChip('${chipId}','${dzId}')"><i class="ti ti-x"></i></button></div>`;el.style.display='block';const dz=document.getElementById(dzId);if(dz)dz.style.display='none';}
 function removeChip(chipId,dzId){document.getElementById(chipId).style.display='none';document.getElementById(chipId).innerHTML='';const dz=document.getElementById(dzId);if(dz)dz.style.display='block';}
-function dzDropPhotos(e,gId){e.preventDefault();dzLeave('sl-dz');Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')).forEach(f=>addPThumb(gId,f));}
-function dzChangePhotos(e,gId){Array.from(e.target.files).forEach(f=>addPThumb(gId,f));}
+function dzDropPhotos(e,gId){e.preventDefault();dzLeave('sl-dz');Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')).forEach(f=>addPThumbCloud(gId,f));}
+function dzChangePhotos(e,gId){Array.from(e.target.files).forEach(f=>addPThumbCloud(gId,f));}
 function addPThumb(gId,file){const g=document.getElementById(gId);const url=URL.createObjectURL(file);const d=document.createElement('div');d.className='photo-thumb';d.innerHTML=`<img src="${url}"><div class="ph-ov"><i class="ti ti-eye"></i></div>`;d.onclick=()=>{document.getElementById('photo-big').src=url;document.getElementById('photo-big').style.display='block';openM('modal-photo');};g.appendChild(d);}
 function inlineAttach(btn,label,dt,idx){const inp=document.createElement('input');inp.type='file';inp.accept='image/*,.pdf,.xlsx,.xls';inp.onchange=(e)=>{if(!e.target.files.length)return;const file=e.target.files[0];storeFileURL(label,file);btn.className='rcp-btn has';btn.innerHTML=`<i class="ti ti-file-check"></i> 보기`;btn.onclick=()=>viewFile(label);if(dt==='pay'&&payments[idx])payments[idx].receipt=true;if(dt==='order'&&orders[idx])orders[idx].receipt=true;if(dt==='est-file'&&estimates[idx]){estimates[idx].file=true;renderEst();}if(dt==='ct-file'&&contracts[idx]){contracts[idx].file=true;renderContract();}if(dt==='vp-file'&&vpList[idx]){vpList[idx].file=true;renderVP();}if(dt==='gj-file'&&siteList[idx]){siteList[idx].file=true;renderGongjung();}if(dt==='prop-file'&&proposals[idx]){proposals[idx].file=true;renderProp();}updateMissing();};inp.click();}
 
@@ -940,8 +1133,8 @@ function renderConsult(){const tb=document.getElementById('consult-tb');if(!tb)r
 function renderGongjung(){const tb=document.getElementById('gongjung-tb');if(!tb)return;const yv=(document.getElementById('gj-year')||{}).value||'';const mv=(document.getElementById('gj-month')||{}).value||'';const GJ_ST=['진행중','완료'];const gjSrcF=(document.getElementById('gj-src-filter')||{}).value||'';tb.innerHTML=siteList.filter(s=>{if(gjSrcF&&s.src!==gjSrcF)return false;if(yv&&!(s.regDate||'').startsWith(yv))return !yv;if(mv){const rm=String(parseInt(mv)).padStart(2,'0');const rd=s.regDate||'';const rm2=rd.slice(5,7)||rd.split('.')[1]||'';if(rm2!==rm&&rm2!==String(parseInt(mv)))return false;}return true;}).map((s,i)=>{const ri=siteList.indexOf(s);const cls=s.status==='완료'?'row-closed':'';return`<tr data-status="${s.status}" data-src="${s.src||''}" class="${cls}"><td>${s.mgr}</td><td style="color:var(--text3);font-size:11px">${s.regDate||'—'}</td><td style="font-weight:600">${lnk(s.name)}</td><td>${s.phone}</td><td style="color:var(--text2)">${s.addr}</td><td>${s.src?bd(s.src):'—'}</td><td>${s.start||'—'}</td><td>${s.end||'—'}</td><td><select class="inline-sel" onchange="changeGjSt(${ri},this.value)">${GJ_ST.map(st=>`<option value="${st}"${st===s.status?' selected':''}>${st}</option>`).join('')}</select></td><td>${s.file?xlsBtn(s.name+' 공정표'):rcpBtn(false,s.name+' 공정표',ri,'gj-file')}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditGj(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delGj(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function renderPlan(){const spt=document.getElementById('siteplan-tb');if(!spt)return;const PLAN_TYPES=['자재발주','현장방문','기타'];spt.innerHTML=siteplans.map((s,i)=>{if(s.done)return'';const u=urgency(s.date);const dl=getDL(s.date);return`<tr data-urgency="${u}"><td style="font-weight:600">${s.site}</td><td><select class="inline-sel" onchange="siteplans[${i}].type=this.value;renderCal()">${PLAN_TYPES.map(t=>`<option value="${t}"${t===s.type?' selected':''}>${t}</option>`).join('')}</select></td><td>${s.date}<br><span style="font-size:10px;color:${u==='긴급'?'var(--red)':'var(--text3)'};font-weight:${u==='긴급'?700:400}">D-${Math.max(0,dl)}</span></td><td>${s.mgr}</td><td style="color:var(--text2)">${s.content}</td><td>${bd(u)}</td><td><button class="btn btn-xs" onclick="togglePlanDone(${i})">완료 처리</button></td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditPlan(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delPlan(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function renderSL(){const sl=document.getElementById('sitelog-tb');if(!sl)return;sl.innerHTML=siteLogs.map((s,i)=>`<tr data-process="${s.process}"><td>${s.date}</td><td>${lnk(s.site)}</td><td>${s.mgr}</td><td style="color:var(--text2)">${s.summary}</td><td>${bd(s.process)}</td><td>${s.photos.length?`<button class="btn btn-xs" onclick="openPhotoModal(${i})"><i class="ti ti-photo"></i> ${s.photos.length}장</button>`:'<span style="font-size:11px;color:var(--text3)">없음</span>'}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditSL(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delSL(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
-function renderEst(){const et=document.getElementById('est-tb');if(!et)return;const yv=(document.getElementById('est-year')||{}).value||'';const mv=(document.getElementById('est-month')||{}).value||'';const estFilter=document.querySelector('#page-est-list .ftab .fb.on');const curEstF=estFilter?estFilter.getAttribute('onclick'):'';const showTerminated=curEstF.includes('상담종료');const estSrcF=(document.getElementById('est-src-filter')||{}).value||'';et.innerHTML=estimates.filter(e=>{if(yv&&!e.date.startsWith(yv))return false;if(mv&&e.date.slice(5,7)!==mv)return false;if(!showTerminated&&e.status==='상담종료')return false;if(estSrcF&&e.src!==estSrcF)return false;return true;}).map((e,i)=>{const ri=estimates.indexOf(e);const cls=e.status==='상담종료'?'row-closed':e.status==='계약완료'?'row-done':'';const srcBadge=e.src?` ${bd(e.src)}`:'';return`<tr data-status="${e.status}" class="${cls}"><td style="color:var(--text3);font-size:11px">${e.date}</td><td>${e.mgr}</td><td>${lnk(e.cust)}</td><td style="font-size:11px;color:var(--text2)">${e.phone||'—'}</td><td style="font-size:11px;color:var(--text2)">${e.addr||'—'}</td><td>${e.amt.toLocaleString()}원</td><td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td><td>${srcBadge}</td><td>${e.status==='상담종료'?`<div style="display:flex;align-items:center;gap:4px"><select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select><button class="btn btn-xs" style="color:var(--blue-t);border-color:var(--blue-lt);font-size:10px" onclick="changeEstSt(${ri},'대면상담')">↩ 되돌리기</button></div>`:`<select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select>`}</td><td>${e.file?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="viewFile('${e.fileKey||'견적서'}')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`:rcpBtn(false,'견적서',ri,'est-file')}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditEst(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delEst(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
-function renderContract(){const ct=document.getElementById('contract-tb');if(!ct)return;const yv=(document.getElementById('contract-year')||{}).value||'';const mv=(document.getElementById('contract-month')||{}).value||'';ct.innerHTML=contracts.filter(c=>{if(yv&&!c.date.startsWith(yv))return false;if(mv&&c.date.slice(5,7)!==mv)return false;return true;}).map((c,i)=>{const ri=contracts.indexOf(c);const cls=c.status==='공사완료'?'row-closed':'';return`<tr data-status="${c.status}" class="${cls}"><td>${c.mgr}</td><td>${lnk(c.cust)}</td><td>${c.phone}</td><td>${c.addr}</td><td>${c.amt.toLocaleString()}원</td><td>${bd(c.vat)}</td><td>${c.date}</td><td><select class="inline-sel" onchange="changeContractSt(${ri},this.value)">${CONTRACT_ST.map(s=>`<option value="${s}"${s===c.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${c.file?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="viewFile('${c.fileKey||'계약서'}')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`:rcpBtn(false,'계약서',ri,'ct-file')}</td></tr>`;}).join('');}
+function renderEst(){const et=document.getElementById('est-tb');if(!et)return;const yv=(document.getElementById('est-year')||{}).value||'';const mv=(document.getElementById('est-month')||{}).value||'';const estFilter=document.querySelector('#page-est-list .ftab .fb.on');const curEstF=estFilter?estFilter.getAttribute('onclick'):'';const showTerminated=curEstF.includes('상담종료');const estSrcF=(document.getElementById('est-src-filter')||{}).value||'';et.innerHTML=estimates.filter(e=>{if(yv&&!e.date.startsWith(yv))return false;if(mv&&e.date.slice(5,7)!==mv)return false;if(!showTerminated&&e.status==='상담종료')return false;if(estSrcF&&e.src!==estSrcF)return false;return true;}).map((e,i)=>{const ri=estimates.indexOf(e);const cls=e.status==='상담종료'?'row-closed':e.status==='계약완료'?'row-done':'';const srcBadge=e.src?` ${bd(e.src)}`:'';return`<tr data-status="${e.status}" class="${cls}"><td style="color:var(--text3);font-size:11px">${e.date}</td><td>${e.mgr}</td><td>${lnk(e.cust)}</td><td style="font-size:11px;color:var(--text2)">${e.phone||'—'}</td><td style="font-size:11px;color:var(--text2)">${e.addr||'—'}</td><td>${e.amt.toLocaleString()}원</td><td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td><td>${srcBadge}</td><td>${e.status==='상담종료'?`<div style="display:flex;align-items:center;gap:4px"><select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select><button class="btn btn-xs" style="color:var(--blue-t);border-color:var(--blue-lt);font-size:10px" onclick="changeEstSt(${ri},'대면상담')">↩ 되돌리기</button></div>`:`<select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select>`}</td><td>${e.file?(e.fileURL?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="window.open('${e.fileURL}','_blank')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`:rcpBtn(true,'견적서',ri,'est-file')):rcpBtn(false,'견적서',ri,'est-file')}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditEst(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delEst(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderContract(){const ct=document.getElementById('contract-tb');if(!ct)return;const yv=(document.getElementById('contract-year')||{}).value||'';const mv=(document.getElementById('contract-month')||{}).value||'';ct.innerHTML=contracts.filter(c=>{if(yv&&!c.date.startsWith(yv))return false;if(mv&&c.date.slice(5,7)!==mv)return false;return true;}).map((c,i)=>{const ri=contracts.indexOf(c);const cls=c.status==='공사완료'?'row-closed':'';return`<tr data-status="${c.status}" class="${cls}"><td>${c.mgr}</td><td>${lnk(c.cust)}</td><td>${c.phone}</td><td>${c.addr}</td><td>${c.amt.toLocaleString()}원</td><td>${bd(c.vat)}</td><td>${c.date}</td><td><select class="inline-sel" onchange="changeContractSt(${ri},this.value)">${CONTRACT_ST.map(s=>`<option value="${s}"${s===c.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${c.file?(c.fileURL?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="window.open('${c.fileURL}','_blank')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`:rcpBtn(true,'계약서',ri,'ct-file')):rcpBtn(false,'계약서',ri,'ct-file')}</td></tr>`;}).join('');}
 function renderVP(){const vp=document.getElementById('vp-tb');if(!vp)return;vp.innerHTML=vpList.map((v,i)=>`<tr data-type="${v.type}"><td>${bd(v.type)}</td><td style="font-weight:600">${v.name}</td><td>${v.mgr}</td><td>${v.phone}</td><td style="color:var(--text2)">${v.item}</td><td style="color:var(--text3)">${v.memo||'—'}</td><td>${v.photos&&v.photos.length?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="openVpPhotos(${i})"><i class="ti ti-photo"></i> ${v.photos.length}장 보기</button>`:(v.file?`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="viewFile('${v.fileKey||'단가표_'+v.name}')"><i class="ti ti-file-spreadsheet"></i> 열기</button>`:rcpBtn(false,'단가표',i,'vp-file'))}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditVp(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delVp(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
 function renderProfit(){const pt=document.getElementById('profit-tb');if(!pt)return;const yr=document.getElementById('profit-year');const mo=document.getElementById('profit-month');const yv=yr?yr.value:'';const mv=mo?mo.value:'';
 // init year options
@@ -1074,7 +1267,7 @@ document.querySelectorAll('.modal-bg').forEach(bg=>{bg.addEventListener('click',
 
 // ===== COST =====
 function openCost(i){curCostIdx=i;document.getElementById('cost-mt').textContent=profits[i].site+' — 지출 상세';renderCost();openM('modal-cost');}
-function renderCost(){const p=profits[curCostIdx];if(!p)return;const tb=document.getElementById('cost-tb');if(!tb)return;tb.innerHTML=p.costs.map((c,i)=>{const dv=c.date?c.date.replace(/\./g,'-'):'';const rcpHtml=c.receipt?`<button class="rcp-btn has" onclick="viewCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`:`<button class="rcp-btn" onclick="attachCostFile(${curCostIdx},${i},this)"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td><input class="cost-input" type="date" value="${dv}" onchange="profits[${curCostIdx}].costs[${i}].date=this.value.replace(/-/g,'.');calcCost()" style="width:115px;border:1px solid var(--border2);border-radius:5px;padding:4px 6px;font-size:11px;background:#fff;color:var(--text);cursor:pointer"></td><td><input class="cost-input" type="text" value="${c.payer||''}" placeholder="결제자" onchange="profits[${curCostIdx}].costs[${i}].payer=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.process}" onchange="profits[${curCostIdx}].costs[${i}].process=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.desc}" onchange="profits[${curCostIdx}].costs[${i}].desc=this.value" style="width:100%"></td><td><input class="cost-input" type="number" value="${c.amt}" onchange="profits[${curCostIdx}].costs[${i}].amt=Number(this.value);calcCost()" style="width:100%"></td><td>${rcpHtml}</td><td><button class="icon-btn" onclick="delCost(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');calcCost();}
+function renderCost(){const p=profits[curCostIdx];if(!p)return;const tb=document.getElementById('cost-tb');if(!tb)return;tb.innerHTML=p.costs.map((c,i)=>{const dv=c.date?c.date.replace(/\./g,'-'):'';const rcpHtml=c.receipt?`<button class="rcp-btn has" onclick="viewCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`:`<button class="rcp-btn" onclick="attachCostFileCloud(${curCostIdx},${i},this)"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td><input class="cost-input" type="date" value="${dv}" onchange="profits[${curCostIdx}].costs[${i}].date=this.value.replace(/-/g,'.');calcCost()" style="width:115px;border:1px solid var(--border2);border-radius:5px;padding:4px 6px;font-size:11px;background:#fff;color:var(--text);cursor:pointer"></td><td><input class="cost-input" type="text" value="${c.payer||''}" placeholder="결제자" onchange="profits[${curCostIdx}].costs[${i}].payer=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.process}" onchange="profits[${curCostIdx}].costs[${i}].process=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.desc}" onchange="profits[${curCostIdx}].costs[${i}].desc=this.value" style="width:100%"></td><td><input class="cost-input" type="number" value="${c.amt}" onchange="profits[${curCostIdx}].costs[${i}].amt=Number(this.value);calcCost()" style="width:100%"></td><td>${rcpHtml}</td><td><button class="icon-btn" onclick="delCost(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');calcCost();}
 function calcCost(){const total=profits[curCostIdx].costs.reduce((a,c)=>a+Number(c.amt),0);document.getElementById('cost-total').textContent=total.toLocaleString()+'원';}
 function attachCostFile(pi,ci,btn){const inp=document.createElement('input');inp.type='file';inp.accept='image/*,.pdf';inp.onchange=(e)=>{if(!e.target.files.length)return;const file=e.target.files[0];profits[pi].costs[ci].receipt=true;profits[pi].costs[ci].receiptName=file.name;profits[pi].costs[ci].receiptURL=URL.createObjectURL(file);btn.className='rcp-btn has';btn.innerHTML='<i class="ti ti-file-check"></i> 보기';btn.onclick=()=>viewCostFile(pi,ci);};inp.click();}
 function viewCostFile(pi,ci){const c=profits[pi]&&profits[pi].costs[ci];if(c&&c.receiptURL){const w=window.open();w.document.write('<img src="'+c.receiptURL+'" style="max-width:100%;"><p>'+( c.receiptName||'영수증')+'</p>');}else{document.getElementById('file-name').textContent=(c&&c.receiptName)||'영수증';openM('modal-file');}}
@@ -1086,7 +1279,7 @@ function saveCost(){closeM('modal-cost');render();updateMissing();triggerSave();
 var _currentPhotoIdx=-1;
 function openPhotoModal(i){_currentPhotoIdx=i;const s=siteLogs[i];document.getElementById('photo-grid-title').textContent=s.site+' 현장 사진';const wrap=document.getElementById('photo-big-wrap');if(wrap)wrap.style.display='none';const addBtn=document.getElementById('photo-add-btn');if(addBtn)addBtn.style.display='inline-flex';const g=document.getElementById('modal-photo-grid');renderPhotoGrid(i);openM('modal-photo');}
 function renderPhotoGrid(i){const s=siteLogs[i];const g=document.getElementById('modal-photo-grid');if(!g)return;g.innerHTML=s.photos.map((url,j)=>`<div class="photo-thumb"><img src="${url}"><div class="ph-ov"><i class="ti ti-eye"></i></div></div>`).join('');g.querySelectorAll('.photo-thumb').forEach((th,j)=>{th.onclick=()=>{const big=document.getElementById('photo-big');const wrap=document.getElementById('photo-big-wrap');big.src=s.photos[j];big.classList.remove('zoomed');if(wrap)wrap.style.display='block';big.scrollIntoView({behavior:'smooth',block:'nearest'});};});}
-function addMorePhotos(){const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.multiple=true;inp.onchange=(e)=>{Array.from(e.target.files).forEach(f=>{const url=URL.createObjectURL(f);if(_currentPhotoIdx>=0&&siteLogs[_currentPhotoIdx])siteLogs[_currentPhotoIdx].photos.push(url);});if(_currentPhotoIdx>=0)renderPhotoGrid(_currentPhotoIdx);renderSL();};inp.click();}
+function addMorePhotos(){const inp=document.createElement('input');inp.type='file';inp.accept='image/*';inp.multiple=true;inp.onchange=async(e)=>{for(const f of Array.from(e.target.files)){showUploadProgress(f.name);const url=await uploadToCloud(f);hideUploadProgress();if(url&&_currentPhotoIdx>=0&&siteLogs[_currentPhotoIdx])siteLogs[_currentPhotoIdx].photos.push(url);}if(_currentPhotoIdx>=0)renderPhotoGrid(_currentPhotoIdx);renderSL();triggerSave();};inp.click();}
 const fileURLMap={};
 var _currentFileLabel='';
 function openStoredFile(){if(_currentFileLabel&&fileURLMap[_currentFileLabel]){const a=document.createElement('a');a.href=fileURLMap[_currentFileLabel];a.target='_blank';a.download=_currentFileLabel;a.click();}}
@@ -1162,7 +1355,7 @@ function savePay(){const n=document.getElementById('pay-name').value.trim();if(!
 if(payType==='출금'){const pi=profits.findIndex(p=>(p.name===n||(p.site||'').startsWith(n))&&(p.phone===payPhone||!payPhone||!p.phone));if(pi>=0){const payMgr=document.getElementById('pay-mgr-sel').value||'—';const costEntry={date:payDate,payer:payMgr,process:'',desc:payMemo||'결제관리 자동연동',amt:payAmt,receipt:hasFile,receiptURL:hasFile&&window._pendingPayFileURL?window._pendingPayFileURL:null};if(costEntry.receiptURL)fileURLMap['pay_cost_'+Date.now()]=costEntry.receiptURL;profits[pi].costs.push(costEntry);renderProfit();updateMissing();}};renderPay();triggerSave();closeM('modal-add-pay');}
 function savePlan(){const s=document.getElementById('np-site').value.trim();const d=dateToKo(document.getElementById('np-date').value.trim());if(!s||!d){alert('현장명과 예정일은 필수입니다.');return;}siteplans.unshift({site:s,type:document.getElementById('np-type').value,date:d,mgr:document.getElementById('np-mgr').value,content:document.getElementById('np-content').value||'내용 없음',done:false});render();resetPlanModal();closeM('modal-add-plan');triggerSave();}
 function resetPlanModal(){['np-site','np-content'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const nd=document.getElementById('np-date');if(nd)nd.value='';}
-function saveEst(){const c=document.getElementById('ew-cust').value||'—';const addr=document.getElementById('ew-addr').value||'—';const phone=document.getElementById('ew-phone').value||'—';const a=Number(document.getElementById('ew-amt').value)||0;const chip=document.getElementById('ew-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const memoEl=document.querySelector('#page-est-write textarea');const memo=memoEl?memoEl.value:'';const mgrEl=document.querySelector('#page-est-write select');const mgr=mgrEl?mgrEl.value:'김민섭';const period=(document.getElementById('ew-period')||{}).value||'';const today=new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'});const fileKey='견적서_'+c+'_'+today;if(hasFile&&window._pendingFileURL){fileURLMap[fileKey]=window._pendingFileURL;window._pendingFileURL=null;}const src=(document.getElementById('ew-src')||{}).value||'';estimates.unshift({cust:c,addr,phone,mgr,period,src,date:today,amt:a,memo,status:'견적발송',file:hasFile,fileKey});renderEst();triggerSave();clearEstWrite();alert('저장되었습니다.');}
+function saveEst(){const c=document.getElementById('ew-cust').value||'—';const addr=document.getElementById('ew-addr').value||'—';const phone=document.getElementById('ew-phone').value||'—';const a=Number(document.getElementById('ew-amt').value)||0;const chip=document.getElementById('ew-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const memoEl=document.querySelector('#page-est-write textarea');const memo=memoEl?memoEl.value:'';const mgrEl=document.querySelector('#page-est-write select');const mgr=mgrEl?mgrEl.value:'김민섭';const period=(document.getElementById('ew-period')||{}).value||'';const today=new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'});const fileKey='견적서_'+c+'_'+today;const fileURL=window._pendingFileURL||null;if(hasFile&&fileURL){fileURLMap[fileKey]=fileURL;window._pendingFileURL=null;}const src=(document.getElementById('ew-src')||{}).value||'';estimates.unshift({cust:c,addr,phone,mgr,period,src,date:today,amt:a,memo,status:'견적발송',file:hasFile,fileKey,fileURL:hasFile?fileURL:null});renderEst();triggerSave();clearEstWrite();alert('저장되었습니다.');}
 function clearEstWrite(){['ew-cust','ew-addr','ew-phone','ew-amt'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const memoEl=document.querySelector('#page-est-write textarea');if(memoEl)memoEl.value='';const srcEl=document.getElementById('ew-src');if(srcEl)srcEl.value='';const startEl=document.getElementById('ew-start');if(startEl)startEl.value='';const endEl=document.getElementById('ew-end');if(endEl)endEl.value='';const disp=document.getElementById('ew-period-display');if(disp)disp.textContent='';const hidden=document.getElementById('ew-period');if(hidden)hidden.value='';removeChip('ew-chip','ew-dz');window._pendingFileURL=null;// refresh valid date
 const vd=document.getElementById('ew-valid');if(vd){const d=new Date();d.setMonth(d.getMonth()+1);vd.value=d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');}// reset mgr select
 const mgrEl=document.querySelector('#page-est-write select');if(mgrEl)mgrEl.selectedIndex=0;}
@@ -1224,11 +1417,11 @@ let docList=[];
 function saveDoc(){const t=document.getElementById('doc-title').value.trim();if(!t){alert('제목을 입력하세요.');return;}const chip=document.getElementById('doc-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const fname=hasFile?chip.querySelector('.file-chip')?.textContent?.trim()||'':'' ;const fileURL=hasFile?(window._pendingDocFileURL||null):null;if(fileURL)window._pendingDocFileURL=null;docList.unshift({title:t,desc:document.getElementById('doc-desc').value||'',date:new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'}),file:hasFile,fname,fileURL});renderDocs();triggerSave();clearDocForm();}
 function clearDocForm(){['doc-title','doc-desc'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('doc-chip').style.display='none';document.getElementById('doc-chip').innerHTML='';document.getElementById('doc-dz').style.display='block';}
 function renderDocs(){const tb=document.getElementById('doc-tb');if(!tb)return;const cnt=document.getElementById('doc-count');if(cnt)cnt.textContent='총 '+docList.length+'개';tb.innerHTML=docList.map((d,i)=>{const fileCell=d.file?`<div style="display:flex;gap:5px;align-items:center"><button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt)" onclick="downloadDoc(${i})"><i class="ti ti-download"></i> 열기</button><button class="btn btn-xs" style="color:var(--text2)" onclick="attachDoc(${i})"><i class="ti ti-refresh"></i> 교체</button></div>`:`<button class="rcp-btn" onclick="attachDoc(${i})"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td style="font-weight:600">${d.title}</td><td style="color:var(--text2)">${d.desc||'—'}</td><td style="color:var(--text3);font-size:11px">${d.date}</td><td>${fileCell}</td><td><button class="icon-btn" onclick="delDoc(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
-function attachDoc(i){const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls,.pdf,.docx,.hwp';inp.onchange=(e)=>{if(!e.target.files.length)return;const file=e.target.files[0];docList[i].file=true;docList[i].fname=file.name;docList[i].fileURL=URL.createObjectURL(file);renderDocs();};inp.click();}
-function downloadDoc(i){const d=docList[i];const url=d&&(d.fileURL||fileURLMap['doc_'+i]);if(d&&url){const a=document.createElement('a');a.href=url;a.target='_blank';a.download=d.fname||d.title;a.click();}else{document.getElementById('file-name').textContent=d?d.fname||d.title:'파일';openM('modal-file');}}
+function attachDoc(i){attachDocCloud(i);}
+function downloadDoc(i){const d=docList[i];const url=d&&d.fileURL;if(d&&url){window.open(url,'_blank');}else{document.getElementById('file-name').textContent=d?d.fname||d.title:'파일';openM('modal-file');}}
 function delDoc(i){if(!confirm('삭제하시겠습니까?'))return;docList.splice(i,1);renderDocs();}
 
-function saveContract(){const n=document.getElementById('ct-name').value.trim();if(!n){alert('고객명은 필수입니다.');return;}const chip=document.getElementById('ct-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const vatEl=document.querySelector('input[name="vat"]:checked');const today=dateToKo(document.getElementById('ct-date').value)||'—';const fileKey='계약서_'+n+'_'+today;if(hasFile&&window._pendingCtFileURL){fileURLMap[fileKey]=window._pendingCtFileURL;window._pendingCtFileURL=null;}contracts.unshift({mgr:document.getElementById('ct-mgr').value,cust:n,phone:document.getElementById('ct-phone').value||'—',amt:Number(document.getElementById('ct-amt').value)||0,vat:vatEl?vatEl.value:'포함',date:today,addr:document.getElementById('ct-addr').value||'—',status:'공사진행중',file:hasFile,fileKey});renderContract();triggerSave();resetContractModal();closeM('modal-add-contract');}
+function saveContract(){const n=document.getElementById('ct-name').value.trim();if(!n){alert('고객명은 필수입니다.');return;}const chip=document.getElementById('ct-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const vatEl=document.querySelector('input[name="vat"]:checked');const today=dateToKo(document.getElementById('ct-date').value)||'—';const fileKey='계약서_'+n+'_'+today;const ctFileURL=window._pendingCtFileURL||null;if(hasFile&&ctFileURL){fileURLMap[fileKey]=ctFileURL;window._pendingCtFileURL=null;}contracts.unshift({mgr:document.getElementById('ct-mgr').value,cust:n,phone:document.getElementById('ct-phone').value||'—',amt:Number(document.getElementById('ct-amt').value)||0,vat:vatEl?vatEl.value:'포함',date:today,addr:document.getElementById('ct-addr').value||'—',status:'공사진행중',file:hasFile,fileKey,fileURL:hasFile?ctFileURL:null});renderContract();triggerSave();resetContractModal();closeM('modal-add-contract');}
 
 function openEditPay(i){const p=payments[i];if(!p)return;document.getElementById('epay-idx').value=i;document.getElementById('epay-date').value=(p.date||'').replace(/\./g,'-');document.getElementById('epay-mgr').value=p.mgr||'김민섭';document.getElementById('epay-name').value=p.target||'';document.getElementById('epay-phone').value=p.phone||'';document.getElementById('epay-type').value=p.type||'입금';document.getElementById('epay-amt').value=p.amt||0;document.getElementById('epay-method').value=p.method||'계좌이체';document.getElementById('epay-status').value=p.status||'완료';document.getElementById('epay-vat').value=p.vat||'미발행';document.getElementById('epay-memo').value=p.memo||'';openM('modal-edit-pay');}
 function saveEditPay(){const i=Number(document.getElementById('epay-idx').value);if(i<0||!payments[i])return;payments[i].date=dateToKo(document.getElementById('epay-date').value)||payments[i].date;payments[i].mgr=document.getElementById('epay-mgr').value;payments[i].target=document.getElementById('epay-name').value;payments[i].phone=document.getElementById('epay-phone').value;payments[i].type=document.getElementById('epay-type').value;payments[i].amt=Number(document.getElementById('epay-amt').value)||0;payments[i].method=document.getElementById('epay-method').value;payments[i].status=document.getElementById('epay-status').value;payments[i].vat=document.getElementById('epay-vat').value;payments[i].memo=document.getElementById('epay-memo').value;renderPay();triggerSave();closeM('modal-edit-pay');}
@@ -1335,8 +1528,8 @@ function delProfit(i){if(!confirm('삭제하시겠습니까?'))return;profits.sp
 
 // ===== 거래처 단가표 다중 이미지 =====
 window._vpPendingPhotos = [];
-function vpDropPhotos(e){e.preventDefault();dzLeave('vp-dz');Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')||f.type==='application/pdf').forEach(f=>addVpPhoto(f));}
-function vpChangePhotos(e){Array.from(e.target.files).forEach(f=>addVpPhoto(f));}
+function vpDropPhotos(e){e.preventDefault();dzLeave('vp-dz');Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')||f.type==='application/pdf').forEach(f=>addVpPhotoCloud(f));}
+function vpChangePhotos(e){Array.from(e.target.files).forEach(f=>addVpPhotoCloud(f));}
 function addVpPhoto(file){const url=URL.createObjectURL(file);if(!window._vpPendingPhotos)window._vpPendingPhotos=[];window._vpPendingPhotos.push(url);renderVpPhotoGrid('vp-photo-grid',window._vpPendingPhotos);const cnt=document.getElementById('vp-photo-count');if(cnt){cnt.textContent=window._vpPendingPhotos.length+'장 선택됨';cnt.style.display='block';}}
 function renderVpPhotoGrid(gridId,photos){const g=document.getElementById(gridId);if(!g)return;g.innerHTML=photos.map((url,i)=>`<div class="photo-thumb" style="position:relative"><img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius)"><div class="ph-ov" onclick="openVpPhotoViewer(${JSON.stringify(photos)},${i})"><i class="ti ti-eye"></i></div><button onclick="removeVpPhoto(${i},'${gridId}')" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.5);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">×</button></div>`).join('');}
 function removeVpPhoto(i,gridId){if(gridId==='vp-photo-grid'){window._vpPendingPhotos.splice(i,1);renderVpPhotoGrid('vp-photo-grid',window._vpPendingPhotos);}else if(gridId==='evp-photo-grid'){const idx=Number(document.getElementById('evp-idx').value);if(vpList[idx]&&vpList[idx].photos)vpList[idx].photos.splice(i,1);renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos||[]);}}
@@ -1374,7 +1567,7 @@ function openVpPhotoViewer(photos,startIdx,title){
 }
 // 수정 모달 사진 처리
 function evpDropPhotos(e){e.preventDefault();dzLeave('evp-dz');const idx=Number(document.getElementById('evp-idx').value);if(!vpList[idx])return;if(!vpList[idx].photos)vpList[idx].photos=[];Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')||f.type==='application/pdf').forEach(f=>{vpList[idx].photos.push(URL.createObjectURL(f));});renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos);}
-function evpChangePhotos(e){const idx=Number(document.getElementById('evp-idx').value);if(!vpList[idx])return;if(!vpList[idx].photos)vpList[idx].photos=[];Array.from(e.target.files).forEach(f=>{vpList[idx].photos.push(URL.createObjectURL(f));});renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos);}
+async function evpChangePhotos(e){const idx=Number(document.getElementById('evp-idx').value);if(!vpList[idx])return;if(!vpList[idx].photos)vpList[idx].photos=[];for(const f of Array.from(e.target.files)){showUploadProgress(f.name);const url=await uploadToCloud(f);hideUploadProgress();if(url)vpList[idx].photos.push(url);}renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos);triggerSave();}
 // ===== 관리 CRUD 함수 =====
 
 // 상담 일정
@@ -1385,7 +1578,8 @@ function delConsult(i){if(!confirm('삭제하시겠습니까?'))return;consultLi
 function openEditConsultRow_alias(i){openEditConsultRow(i);}
 
 // 견적
-function openEditEst(i){const e=estimates[i];if(!e)return;document.getElementById('ee-idx').value=i;document.getElementById('ee-cust').value=e.cust||'';document.getElementById('ee-mgr').value=e.mgr||'김민섭';document.getElementById('ee-addr').value=e.addr||'';document.getElementById('ee-phone').value=e.phone||'';document.getElementById('ee-amt').value=e.amt||0;document.getElementById('ee-src').value=e.src||'';document.getElementById('ee-memo').value=e.memo||'';openM('modal-edit-est');}
+function openEditEst(i){const e=estimates[i];if(!e)return;document.getElementById('ee-idx').value=i;document.getElementById('ee-cust').value=e.cust||'';document.getElementById('ee-mgr').value=e.mgr||'김민섭';document.getElementById('ee-addr').value=e.addr||'';document.getElementById('ee-phone').value=e.phone||'';document.getElementById('ee-amt').value=e.amt||0;document.getElementById('ee-src').value=e.src||'';document.getElementById('ee-memo').value=e.memo||'';const fs=document.getElementById('ee-file-status');if(fs)fs.textContent=e.file?(e.fileURL?'현재: 파일 있음 (클라우드)':'현재: 파일 있음'):'(없음)';openM('modal-edit-est');}
+function attachEstFile(){const i=Number(document.getElementById('ee-idx').value);if(!estimates[i])return;const inp=document.createElement('input');inp.type='file';inp.accept='.xlsx,.xls,.pdf';inp.onchange=async(e)=>{if(!e.target.files.length)return;const file=e.target.files[0];const btn=document.getElementById('ee-file-btn');btn.innerHTML='<i class="ti ti-loader"></i> 업로드 중...';btn.disabled=true;showUploadProgress(file.name);const url=await uploadToCloud(file);hideUploadProgress();btn.disabled=false;if(!url){alert('업로드 실패');btn.innerHTML='<i class="ti ti-paperclip"></i> 파일 교체/첨부';return;}estimates[i].file=true;estimates[i].fileURL=url;estimates[i].fileKey='est_'+i;fileURLMap[estimates[i].fileKey]=url;const fs=document.getElementById('ee-file-status');if(fs)fs.textContent='✓ 업로드 완료';btn.innerHTML='<i class="ti ti-check"></i> 업로드됨';renderEst();triggerSave();};inp.click();}
 function saveEditEst(){const i=Number(document.getElementById('ee-idx').value);if(!estimates[i])return;const e=estimates[i];e.cust=document.getElementById('ee-cust').value;e.mgr=document.getElementById('ee-mgr').value;e.addr=document.getElementById('ee-addr').value;e.phone=document.getElementById('ee-phone').value;e.amt=Number(document.getElementById('ee-amt').value)||0;e.src=document.getElementById('ee-src').value;e.memo=document.getElementById('ee-memo').value;renderEst();triggerSave();closeM('modal-edit-est');}
 function delEst(i){if(!confirm('삭제하시겠습니까?'))return;estimates.splice(i,1);renderEst();triggerSave();}
 
@@ -1458,8 +1652,8 @@ setTimeout(saveToLS, 1000);
     <div class="fg"><label class="fl">메모</label><input type="text" id="ecu-memo"></div>
     <div class="fg">
       <label class="fl"><i class="ti ti-map-2" style="font-size:12px;vertical-align:-1px;color:var(--acc)"></i> 평면도 <span id="ecu-plan-status" style="font-size:10px;color:var(--text3)"></span></label>
-      <div class="drop-zone" id="ecu-plan-dz" ondragover="dzOver(event,'ecu-plan-dz')" ondragleave="dzLeave('ecu-plan-dz')" ondrop="dzDrop(event,'ecu-plan-dz','ecu-plan-chip')">
-        <input type="file" accept="image/*,.pdf,.dwg,.dxf" onchange="dzChange(event,'ecu-plan-dz','ecu-plan-chip');if(event.target.files[0])window._pendingEcuPlanURL=URL.createObjectURL(event.target.files[0])">
+      <div class="drop-zone" id="ecu-plan-dz" ondragover="dzOver(event,'ecu-plan-dz')" ondragleave="dzLeave('ecu-plan-dz')" ondrop="dzDropCloud(event,'ecu-plan-dz','ecu-plan-chip')">
+        <input type="file" accept="image/*,.pdf,.dwg,.dxf" onchange="dzChangeCloud(event,'ecu-plan-dz','ecu-plan-chip')">
         <i class="ti ti-map-2"></i><p>평면도를 교체하려면 새 파일을 선택하세요</p><div class="hint">이미지, PDF, DWG 등</div>
       </div>
       <div id="ecu-plan-chip" style="display:none"></div>
@@ -1508,6 +1702,9 @@ setTimeout(saveToLS, 1000);
     <div class="fg"><label class="fl">연락처</label><input type="tel" id="ee-phone"></div>
     <div class="g2"><div class="fg"><label class="fl">금액 (원)</label><input type="number" id="ee-amt"></div><div class="fg"><label class="fl">유입경로</label><select id="ee-src"><option value="">선택</option><option>SNS</option><option>블로그</option><option>오늘의집</option><option>소개</option></select></div></div>
     <div class="fg"><label class="fl">메모</label><textarea id="ee-memo" rows="3"></textarea></div>
+    <div class="fg"><label class="fl"><i class="ti ti-file-spreadsheet" style="font-size:12px;vertical-align:-1px;color:var(--acc)"></i> 견적서 파일 <span id="ee-file-status" style="font-size:10px;color:var(--text3)"></span></label>
+      <button class="btn btn-sm" id="ee-file-btn" onclick="attachEstFile()"><i class="ti ti-paperclip"></i> 파일 교체/첨부</button>
+    </div>
     <div style="display:flex;gap:8px;justify-content:flex-end"><button class="btn btn-xs" style="color:var(--red-t);border-color:var(--red-lt);margin-right:auto" onclick="delEst(Number(document.getElementById('ee-idx').value));closeM('modal-edit-est')"><i class="ti ti-trash"></i> 삭제</button><button class="btn" onclick="closeM('modal-edit-est')">취소</button><button class="btn btn-g" onclick="saveEditEst()"><i class="ti ti-device-floppy"></i> 저장</button></div>
   </div>
 </div></div>
