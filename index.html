@@ -6,7 +6,7 @@
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, doc, setDoc, getDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+  import { getFirestore, doc, setDoc, getDoc, onSnapshot, serverTimestamp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
   const firebaseConfig = {
     apiKey: "AIzaSyAcWCIqKr37_sSuTuMVB3xtigiGx-AfmlE",
@@ -21,51 +21,98 @@
   const db = getFirestore(app);
   const DOC_REF = doc(db, 'haeso', 'data');
 
-  // Firestore → 앱으로 데이터 로드
+  // 고유 세션 ID (이 기기의 저장 구분용)
+  const SESSION_ID = Math.random().toString(36).slice(2);
+  window._fsSessionId = SESSION_ID;
+  window._fsSaving = false;       // 저장 진행 중 플래그
+  window._fsSaveTimer = null;     // 디바운스 타이머
+  window._fsLastSaveTime = 0;     // 마지막 저장 시각
+
+  const FS_KEYS = ['consultList','siteList','siteLogs','estimates','contracts',
+                   'vpList','profits','payments','orders','proposals',
+                   'siteplans','vendors','docList','customerDB'];
+
+  // Firestore → 앱 데이터 적용
+  function applyData(d) {
+    FS_KEYS.forEach(k => {
+      if (d[k] !== undefined && Array.isArray(d[k])) {
+        try { eval(k + ' = d[k]'); } catch(e) {}
+      }
+    });
+  }
+
+  // Firestore 데이터 로드
   window.fsLoad = async function() {
     try {
       const snap = await getDoc(DOC_REF);
       if (snap.exists()) {
-        const d = snap.data();
-        const keys = ['consultList','siteList','siteLogs','estimates','contracts',
-                      'vpList','profits','payments','orders','proposals',
-                      'siteplans','vendors','docList','customerDB'];
-        keys.forEach(k => { if (d[k] !== undefined) { try { eval(k + ' = d[k]'); } catch(e){} } });
-        console.log('Firestore 데이터 로드 완료');
+        applyData(snap.data());
+        console.log('✅ Firestore 로드 완료');
         return true;
       }
       return false;
     } catch(e) {
-      console.warn('Firestore 로드 실패 (오프라인?)', e);
+      console.warn('⚠️ Firestore 로드 실패 (오프라인?)', e);
       return false;
     }
   };
 
-  // 앱 → Firestore 저장
+  // Firestore 저장 (디바운스 1초 — 연속 입력 시 마지막 것만 저장)
   window.fsSave = async function(dataObj) {
     try {
-      await setDoc(DOC_REF, dataObj);
-      console.log('Firestore 저장 완료');
+      window._fsSaving = true;
+      window._fsLastSaveTime = Date.now();
+      const payload = { ...dataObj, _savedBy: SESSION_ID, _savedAt: Date.now() };
+      await setDoc(DOC_REF, payload);
+      window._fsSaving = false;
+      console.log('✅ Firestore 저장 완료');
     } catch(e) {
-      console.warn('Firestore 저장 실패', e);
+      window._fsSaving = false;
+      console.warn('⚠️ Firestore 저장 실패', e);
     }
   };
 
-  // 실시간 동기화 리스너 (다른 기기에서 변경 시 자동 반영)
+  // 실시간 리스너 — 핵심 안전장치 3가지
   window.fsListen = function() {
     onSnapshot(DOC_REF, (snap) => {
       if (!snap.exists()) return;
-      if (window._fsLocalUpdate) return; // 내가 저장한 건 무시
+
       const d = snap.data();
-      const keys = ['consultList','siteList','siteLogs','estimates','contracts',
-                    'vpList','profits','payments','orders','proposals',
-                    'siteplans','vendors','docList','customerDB'];
-      keys.forEach(k => { if (d[k] !== undefined) { try { eval(k + ' = d[k]'); } catch(e){} } });
+
+      // 안전장치 1: 내가 방금 저장한 건 무시 (3초 이내)
+      if (window._fsSaving) return;
+      if (d._savedBy === SESSION_ID && (Date.now() - window._fsLastSaveTime) < 3000) return;
+
+      // 안전장치 2: 빈 데이터가 오면 무시 (실수로 빈 배열 덮어쓰기 방지)
+      const hasData = FS_KEYS.some(k => Array.isArray(d[k]) && d[k].length > 0);
+      if (!hasData) {
+        console.warn('⚠️ 빈 Firestore 데이터 무시 — 현재 데이터 보존');
+        return;
+      }
+
+      // 안전장치 3: 현재 로컬 데이터가 더 많으면 무시
+      const localCount = FS_KEYS.reduce((sum, k) => {
+        try { return sum + (eval(k)||[]).length; } catch(e) { return sum; }
+      }, 0);
+      const remoteCount = FS_KEYS.reduce((sum, k) => sum + (Array.isArray(d[k]) ? d[k].length : 0), 0);
+
+      if (localCount > remoteCount + 5) {
+        console.warn('⚠️ 원격 데이터가 로컬보다 적음 — 동기화 건너뜀', {local: localCount, remote: remoteCount});
+        return;
+      }
+
+      // 안전하게 적용
+      applyData(d);
       render();
       renderCustRegList();
+
       const ind = document.getElementById('ls-indicator');
-      if (ind) { ind.textContent = '🔄 동기화됨'; ind.style.color = 'var(--blue)'; setTimeout(() => { ind.style.color = 'var(--text3)'; ind.textContent = '저장됨'; }, 2000); }
-      console.log('실시간 동기화 반영');
+      if (ind) {
+        ind.textContent = '🔄 다른 기기에서 업데이트됨';
+        ind.style.color = 'var(--blue)';
+        setTimeout(() => { if(ind) { ind.style.color = 'var(--text3)'; ind.textContent = '저장됨'; } }, 3000);
+      }
+      console.log('🔄 실시간 동기화 반영', {local: localCount, remote: remoteCount});
     });
   };
 
@@ -73,14 +120,21 @@
   window.addEventListener('load', async () => {
     const ind = document.getElementById('ls-indicator');
     if (ind) { ind.textContent = '불러오는 중...'; ind.style.color = 'var(--amber)'; }
+
     const loaded = await window.fsLoad();
     if (loaded) {
       render();
       renderCustRegList();
       setupAllAutocomplete();
     }
-    if (ind) { ind.textContent = loaded ? '동기화 완료' : '새 데이터'; ind.style.color = 'var(--acc)'; setTimeout(() => { ind.style.color = 'var(--text3)'; ind.textContent = '저장됨'; }, 2000); }
-    window.fsListen(); // 실시간 리스너 시작
+
+    if (ind) {
+      ind.textContent = loaded ? '동기화 완료' : '새 데이터';
+      ind.style.color = 'var(--acc)';
+      setTimeout(() => { if(ind) { ind.style.color = 'var(--text3)'; ind.textContent = '저장됨'; } }, 2000);
+    }
+
+    window.fsListen();
   });
 </script>
 <style>
@@ -1108,7 +1162,10 @@ function savePay(){const n=document.getElementById('pay-name').value.trim();if(!
 if(payType==='출금'){const pi=profits.findIndex(p=>(p.name===n||(p.site||'').startsWith(n))&&(p.phone===payPhone||!payPhone||!p.phone));if(pi>=0){const payMgr=document.getElementById('pay-mgr-sel').value||'—';const costEntry={date:payDate,payer:payMgr,process:'',desc:payMemo||'결제관리 자동연동',amt:payAmt,receipt:hasFile,receiptURL:hasFile&&window._pendingPayFileURL?window._pendingPayFileURL:null};if(costEntry.receiptURL)fileURLMap['pay_cost_'+Date.now()]=costEntry.receiptURL;profits[pi].costs.push(costEntry);renderProfit();updateMissing();}};renderPay();triggerSave();closeM('modal-add-pay');}
 function savePlan(){const s=document.getElementById('np-site').value.trim();const d=dateToKo(document.getElementById('np-date').value.trim());if(!s||!d){alert('현장명과 예정일은 필수입니다.');return;}siteplans.unshift({site:s,type:document.getElementById('np-type').value,date:d,mgr:document.getElementById('np-mgr').value,content:document.getElementById('np-content').value||'내용 없음',done:false});render();resetPlanModal();closeM('modal-add-plan');triggerSave();}
 function resetPlanModal(){['np-site','np-content'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const nd=document.getElementById('np-date');if(nd)nd.value='';}
-function saveEst(){const c=document.getElementById('ew-cust').value||'—';const addr=document.getElementById('ew-addr').value||'—';const phone=document.getElementById('ew-phone').value||'—';const a=Number(document.getElementById('ew-amt').value)||0;const chip=document.getElementById('ew-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const memoEl=document.querySelector('#page-est-write textarea');const memo=memoEl?memoEl.value:'';const mgrEl=document.querySelector('#page-est-write select');const mgr=mgrEl?mgrEl.value:'김민섭';const period=(document.getElementById('ew-period')||{}).value||'';const today=new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'});const fileKey='견적서_'+c+'_'+today;if(hasFile&&window._pendingFileURL){fileURLMap[fileKey]=window._pendingFileURL;window._pendingFileURL=null;}const src=(document.getElementById('ew-src')||{}).value||'';estimates.unshift({cust:c,addr,phone,mgr,period,src,date:today,amt:a,memo,status:'견적발송',file:hasFile,fileKey});renderEst();triggerSave();alert('저장되었습니다.');}
+function saveEst(){const c=document.getElementById('ew-cust').value||'—';const addr=document.getElementById('ew-addr').value||'—';const phone=document.getElementById('ew-phone').value||'—';const a=Number(document.getElementById('ew-amt').value)||0;const chip=document.getElementById('ew-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';const memoEl=document.querySelector('#page-est-write textarea');const memo=memoEl?memoEl.value:'';const mgrEl=document.querySelector('#page-est-write select');const mgr=mgrEl?mgrEl.value:'김민섭';const period=(document.getElementById('ew-period')||{}).value||'';const today=new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'});const fileKey='견적서_'+c+'_'+today;if(hasFile&&window._pendingFileURL){fileURLMap[fileKey]=window._pendingFileURL;window._pendingFileURL=null;}const src=(document.getElementById('ew-src')||{}).value||'';estimates.unshift({cust:c,addr,phone,mgr,period,src,date:today,amt:a,memo,status:'견적발송',file:hasFile,fileKey});renderEst();triggerSave();clearEstWrite();alert('저장되었습니다.');}
+function clearEstWrite(){['ew-cust','ew-addr','ew-phone','ew-amt'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const memoEl=document.querySelector('#page-est-write textarea');if(memoEl)memoEl.value='';const srcEl=document.getElementById('ew-src');if(srcEl)srcEl.value='';const startEl=document.getElementById('ew-start');if(startEl)startEl.value='';const endEl=document.getElementById('ew-end');if(endEl)endEl.value='';const disp=document.getElementById('ew-period-display');if(disp)disp.textContent='';const hidden=document.getElementById('ew-period');if(hidden)hidden.value='';removeChip('ew-chip','ew-dz');window._pendingFileURL=null;// refresh valid date
+const vd=document.getElementById('ew-valid');if(vd){const d=new Date();d.setMonth(d.getMonth()+1);vd.value=d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');}// reset mgr select
+const mgrEl=document.querySelector('#page-est-write select');if(mgrEl)mgrEl.selectedIndex=0;}
 function saveOrder(){const v=document.getElementById('no-vendor').value;if(!v){alert('거래처명을 입력하세요.');return;}const chip=document.getElementById('no-chip');const hasFile=chip.style.display!=='none'&&chip.innerHTML!=='';orders.unshift({vendor:v,site:document.getElementById('no-site').value||'—',cust:document.getElementById('no-cust').value||'—',mgr:document.getElementById('no-mgr').value,amt:Number(document.getElementById('no-amt').value)||0,date:dateToKo(document.getElementById('no-date').value)||'—',status:'발주요청',receipt:hasFile});renderOrder();triggerSave();closeM('modal-add-order');}
 function saveVP(){const n=document.getElementById('vp-name').value;if(!n){alert('거래처명을 입력하세요.');return;}const photos=window._vpPendingPhotos||[];vpList.unshift({type:document.getElementById('vp-type').value,name:n,mgr:document.getElementById('vp-mgr').value,phone:document.getElementById('vp-phone').value,item:document.getElementById('vp-item').value||'—',memo:document.getElementById('vp-memo').value,file:photos.length>0,photos:[...photos]});window._vpPendingPhotos=[];const grid=document.getElementById('vp-photo-grid');if(grid)grid.innerHTML='';const cnt=document.getElementById('vp-photo-count');if(cnt){cnt.style.display='none';}renderVP();triggerSave();closeM('modal-add-vp');}
 function addCust(){const n=document.getElementById('nc-name').value.trim();const p=document.getElementById('nc-phone').value.trim();if(!n||!p){alert('이름과 연락처는 필수입니다.');return;}customers.unshift({name:n,phone:p,mgr:document.getElementById('nc-mgr').value,addr:document.getElementById('nc-addr').value||'—',src:document.getElementById('nc-src').value,status:document.getElementById('nc-status').value,date:new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'})});renderCust();triggerSave();closeM('modal-add-cust');}
@@ -1195,12 +1252,14 @@ function saveToLS() {
       localStorage.setItem('haeso_' + k, JSON.stringify(val));
     });
     localStorage.setItem('haeso_ver', LS_VERSION);
-    // Firestore 저장
+    // Firestore 저장 (디바운스로 중복 저장 방지)
     if (window.fsSave) {
       const dataObj = {};
       LS_KEYS.forEach(k => { try { dataObj[k] = eval(k); } catch(e){} });
-      window._fsLocalUpdate = true;
-      window.fsSave(dataObj).finally(() => { setTimeout(() => { window._fsLocalUpdate = false; }, 2000); });
+      clearTimeout(window._fsSaveTimer);
+      window._fsSaveTimer = setTimeout(() => {
+        window.fsSave(dataObj);
+      }, 800);
     }
     // update save indicator
     const ind = document.getElementById('ls-indicator');
@@ -1238,7 +1297,10 @@ function loadFromLS() {
 }
 
 function clearLS() {
-  if (!confirm('저장된 모든 데이터를 초기화하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
+  const pw = prompt('초기화 비밀번호를 입력하세요:');
+  if (pw === null) return;
+  if (pw !== 'rlaalstjq!@A') { alert('비밀번호가 틀렸습니다.'); return; }
+  if (!confirm('비밀번호 확인됨.\n저장된 모든 데이터를 초기화하시겠습니까?\n이 작업은 되돌릴 수 없습니다.')) return;
   LS_KEYS.forEach(k => localStorage.removeItem('haeso_' + k));
   localStorage.removeItem('haeso_ver');
   location.reload();
@@ -1279,8 +1341,37 @@ function addVpPhoto(file){const url=URL.createObjectURL(file);if(!window._vpPend
 function renderVpPhotoGrid(gridId,photos){const g=document.getElementById(gridId);if(!g)return;g.innerHTML=photos.map((url,i)=>`<div class="photo-thumb" style="position:relative"><img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:var(--radius)"><div class="ph-ov" onclick="openVpPhotoViewer(${JSON.stringify(photos)},${i})"><i class="ti ti-eye"></i></div><button onclick="removeVpPhoto(${i},'${gridId}')" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.5);border:none;color:#fff;border-radius:50%;width:18px;height:18px;font-size:10px;cursor:pointer;display:flex;align-items:center;justify-content:center;line-height:1">×</button></div>`).join('');}
 function removeVpPhoto(i,gridId){if(gridId==='vp-photo-grid'){window._vpPendingPhotos.splice(i,1);renderVpPhotoGrid('vp-photo-grid',window._vpPendingPhotos);}else if(gridId==='evp-photo-grid'){const idx=Number(document.getElementById('evp-idx').value);if(vpList[idx]&&vpList[idx].photos)vpList[idx].photos.splice(i,1);renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos||[]);}}
 function openVpPhotos(i){const v=vpList[i];if(!v||!v.photos||!v.photos.length)return;openVpPhotoViewer(v.photos,0,'단가표: '+v.name);}
-function openVpPhotoViewer(photos,startIdx,title){// 전체화면 뷰어
-const overlay=document.createElement('div');overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;';let cur=startIdx;const render=()=>{overlay.innerHTML=`<div style="position:relative;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px"><button onclick="this.closest('div[style*=fixed]').remove()" style="position:absolute;top:16px;right:16px;background:rgba(255,255,255,.15);border:none;color:#fff;width:36px;height:36px;border-radius:50%;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center">×</button><div style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:12px">${title||'사진 보기'} (${cur+1}/${photos.length})</div><img src="${photos[cur]}" style="max-width:90vw;max-height:75vh;object-fit:contain;border-radius:8px;cursor:zoom-in;transition:transform .2s" id="vp-viewer-img" onclick="this.style.transform=this.style.transform?'':'scale(2)';this.style.cursor=this.style.transform?'zoom-out':'zoom-in'"><div style="display:flex;gap:12px;margin-top:16px">${photos.length>1?`<button onclick="cur=Math.max(0,cur-1);this.closest('div[style*=fixed]').querySelector('img').src=photos[cur];this.closest('div').querySelectorAll('span')[0].textContent='${title||''} ('+(cur+1)+'/'+photos.length+')';" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 20px;border-radius:20px;cursor:pointer;font-size:13px">◀ 이전</button><button onclick="cur=Math.min(photos.length-1,cur+1);this.closest('div[style*=fixed]').querySelector('img').src=photos[cur];" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 20px;border-radius:20px;cursor:pointer;font-size:13px">다음 ▶</button>`:''}${photos.map((p,j)=>`<div onclick="cur=${j};this.closest('div[style*=fixed]').querySelector('img').src='${p}'" style="width:44px;height:44px;border-radius:6px;overflow:hidden;cursor:pointer;border:2px solid ${j===cur?'var(--acc)':'transparent'};flex-shrink:0"><img src="${p}" style="width:100%;height:100%;object-fit:cover"></div>`).join('')}</div></div>`;};render();document.body.appendChild(overlay);}
+function openVpPhotoViewer(photos,startIdx,title){
+  const overlay=document.createElement('div');
+  overlay.style.cssText='position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:9999;';
+  let cur=startIdx||0;
+  function render(){
+    const thumbs=photos.map((p,j)=>`<div id="vt-${j}" onclick="window._vpViewerGo(${j})" style="width:44px;height:44px;border-radius:6px;overflow:hidden;cursor:pointer;border:2px solid ${j===cur?'#4e8c24':'transparent'};flex-shrink:0"><img src="${p}" style="width:100%;height:100%;object-fit:cover"></div>`).join('');
+    overlay.innerHTML=`<div style="position:relative;width:100%;height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px">
+      <button onclick="document.body.removeChild(this.closest('[style*=z-index]'))" style="position:absolute;top:16px;right:16px;background:rgba(255,255,255,.15);border:none;color:#fff;width:36px;height:36px;border-radius:50%;font-size:20px;cursor:pointer">×</button>
+      <div id="vv-counter" style="font-size:12px;color:rgba(255,255,255,.6);margin-bottom:12px">${title||'사진 보기'} (${cur+1}/${photos.length})</div>
+      <img id="vv-main" src="${photos[cur]}" style="max-width:90vw;max-height:72vh;object-fit:contain;border-radius:8px;cursor:zoom-in;transition:transform .2s" onclick="this.style.transform=this.style.transform?'':'scale(2)';this.style.cursor=this.style.transform?'zoom-out':'zoom-in'">
+      <div style="display:flex;gap:10px;margin-top:14px;align-items:center;flex-wrap:wrap;justify-content:center">
+        ${photos.length>1?`<button id="vv-prev" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 20px;border-radius:20px;cursor:pointer;font-size:13px">◀ 이전</button>`:''}
+        ${thumbs}
+        ${photos.length>1?`<button id="vv-next" style="background:rgba(255,255,255,.15);border:none;color:#fff;padding:8px 20px;border-radius:20px;cursor:pointer;font-size:13px">다음 ▶</button>`:''}
+      </div>
+    </div>`;
+    // bind prev/next
+    const prev=overlay.querySelector('#vv-prev');
+    const next=overlay.querySelector('#vv-next');
+    if(prev)prev.onclick=()=>{if(cur>0){cur--;goTo();}};
+    if(next)next.onclick=()=>{if(cur<photos.length-1){cur++;goTo();}};
+  }
+  function goTo(){
+    const img=overlay.querySelector('#vv-main');if(img){img.src=photos[cur];img.style.transform='';}
+    const counter=overlay.querySelector('#vv-counter');if(counter)counter.textContent=(title||'사진 보기')+' ('+(cur+1)+'/'+photos.length+')';
+    overlay.querySelectorAll('[id^="vt-"]').forEach((el,j)=>{el.style.border='2px solid '+(j===cur?'#4e8c24':'transparent');});
+  }
+  window._vpViewerGo=function(j){cur=j;goTo();};
+  render();
+  document.body.appendChild(overlay);
+}
 // 수정 모달 사진 처리
 function evpDropPhotos(e){e.preventDefault();dzLeave('evp-dz');const idx=Number(document.getElementById('evp-idx').value);if(!vpList[idx])return;if(!vpList[idx].photos)vpList[idx].photos=[];Array.from(e.dataTransfer.files).filter(f=>f.type.startsWith('image/')||f.type==='application/pdf').forEach(f=>{vpList[idx].photos.push(URL.createObjectURL(f));});renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos);}
 function evpChangePhotos(e){const idx=Number(document.getElementById('evp-idx').value);if(!vpList[idx])return;if(!vpList[idx].photos)vpList[idx].photos=[];Array.from(e.target.files).forEach(f=>{vpList[idx].photos.push(URL.createObjectURL(f));});renderVpPhotoGrid('evp-photo-grid',vpList[idx].photos);}
