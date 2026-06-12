@@ -145,11 +145,10 @@ const CLD_PRESET = 'haeso-upload';
 
 // 파일을 Cloudinary에 업로드하고 공개 URL 반환
 async function uploadToCloud(file) {
-  const isPDF = file.type === 'application/pdf' ||
-    file.name.match(/\.(pdf|xlsx|xls|docx|doc|hwp|pptx|ppt)$/i);
+  const isPDF = file.type === 'application/pdf' || file.name.match(/\.pdf$/i);
 
   if (isPDF) {
-    // PDF/문서 → ImgBB (32MB 제한, 무료)
+    // PDF → ImgBB (32MB 제한, 무료, public URL)
     const IMGBB_KEY = '4e9b99e33d16f3e92ed72a0e9c5e973c';
     const fd = new FormData();
     fd.append('image', file);
@@ -158,9 +157,7 @@ async function uploadToCloud(file) {
         method: 'POST', body: fd
       });
       const data = await res.json();
-      if (data.success) {
-        return data.data.url;
-      }
+      if (data.success) return data.data.url;
       alert('ImgBB 업로드 실패: ' + (data.error ? data.error.message : JSON.stringify(data)));
       return null;
     } catch(e) {
@@ -170,14 +167,16 @@ async function uploadToCloud(file) {
     }
   }
 
-  // 이미지 → Cloudinary
+  // 이미지 → Cloudinary image/upload
+  const isImg = file.type.startsWith('image/');
   const fd = new FormData();
   fd.append('file', file);
   fd.append('upload_preset', CLD_PRESET);
   fd.append('folder', 'haeso');
+  const resType = isImg ? 'image' : 'raw';
   try {
     const res = await fetch(
-      'https://api.cloudinary.com/v1_1/' + CLD_CLOUD + '/image/upload',
+      'https://api.cloudinary.com/v1_1/' + CLD_CLOUD + '/' + resType + '/upload',
       { method: 'POST', body: fd }
     );
     const data = await res.json();
