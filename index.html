@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="ko">
 <head>
@@ -810,6 +811,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
   <div class="sb-i" data-page="customers"><i class="ti ti-users"></i> 고객 목록</div>
   <div class="sb-sec">기타</div>
   <div class="sb-i" data-page="docs"><i class="ti ti-file-description"></i> 서류 양식</div>
+  <div class="sb-i" data-page="office-expense"><i class="ti ti-building"></i> 사무실 지출</div>
 </div>
 <div class="main">
   <div id="pinned-bar" style="display:none" class="pinned-bar">
@@ -1162,6 +1164,45 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
     <table><thead><tr><th>제목</th><th>설명</th><th style="width:110px">등록일</th><th style="width:50px">이미지</th><th style="width:50px">파일</th><th style="width:60px">삭제</th></tr></thead><tbody id="doc-tb"></tbody></table>
   </div>
 </div>
+
+<!-- 사무실 지출 -->
+<div id="page-office-expense" class="page">
+  <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+    <div class="stat"><div class="stat-lbl" id="oe-lbl-period">이번 달 지출</div><div class="stat-val" id="oe-stat-total">—<span class="unit">만원</span></div></div>
+    <div class="stat"><div class="stat-lbl">일반 지출</div><div class="stat-val" id="oe-stat-normal">—<span class="unit">만원</span></div></div>
+    <div class="stat red"><div class="stat-lbl">고정 지출</div><div class="stat-val" id="oe-stat-fixed">—<span class="unit">만원</span></div></div>
+    <div class="stat green"><div class="stat-lbl">정책자금</div><div class="stat-val" id="oe-stat-policy">—<span class="unit">만원</span></div></div>
+  </div>
+  <div class="card">
+    <div class="card-h">
+      <span class="card-t">사무실 지출
+        <button class="btn btn-sm on" id="oef-tab-전체" onclick="filterOE('전체')" style="margin-left:12px">전체</button>
+        <button class="btn btn-sm" id="oef-tab-일반" onclick="filterOE('일반')">일반</button>
+        <button class="btn btn-sm" id="oef-tab-고정지출" onclick="filterOE('고정지출')">고정지출</button>
+        <button class="btn btn-sm" id="oef-tab-정책자금" onclick="filterOE('정책자금')">정책자금</button>
+        <button class="btn btn-sm" id="oef-tab-개인사용" onclick="filterOE('개인사용')">개인사용</button>
+        <span id="oe-sum-display" style="font-size:11px;font-weight:700;color:var(--acc);margin-left:8px"></span>
+      </span>
+      <div style="display:flex;align-items:center;gap:8px">
+        <select id="oe-year" onchange="renderOE()" style="width:90px;padding:5px 8px;font-size:11px"><option value="">연도 전체</option><option>2024</option><option>2025</option><option>2026</option><option>2027</option></select>
+        <select id="oe-month" onchange="renderOE()" style="width:80px;padding:5px 8px;font-size:11px"><option value="">월 전체</option><option>1월</option><option>2월</option><option>3월</option><option>4월</option><option>5월</option><option>6월</option><option>7월</option><option>8월</option><option>9월</option><option>10월</option><option>11월</option><option>12월</option></select>
+      </div>
+    </div>
+    <table><thead><tr>
+      <th style="width:100px">결제일</th>
+      <th style="width:140px">지출 항목</th>
+      <th style="width:120px">지출 금액</th>
+      <th>내용</th>
+      <th style="width:80px">상환</th>
+      <th style="width:80px">첨부</th>
+      <th style="width:80px">상태</th>
+      <th style="width:60px">관리</th>
+    </tr></thead><tbody id="oe-tb"></tbody></table>
+    <div id="oe-empty" style="text-align:center;padding:40px;color:var(--text3);display:none">
+      <i class="ti ti-receipt-off" style="font-size:32px"></i><p style="margin-top:8px">등록된 지출이 없습니다</p>
+    </div>
+  </div>
+</div>
   </div></div></div>
 
 <!-- ===== MODALS ===== -->
@@ -1358,6 +1399,7 @@ let siteplans=[];
 let curCostIdx=-1, curTodoFilter='all';
 let calYear=new Date().getFullYear(), calMonth=new Date().getMonth();
 let calEvents=[];
+let officeExpenses=[];
 const TODAY=new Date();TODAY.setHours(0,0,0,0);
 function parseDK(s){if(!s)return null;const p=s.trim().replace(/\./g,'-').replace(/-+$/,'');const d=new Date(p);return isNaN(d)?null:d;}
 function getDL(s){const d=parseDK(s);if(!d)return 999;return Math.ceil((d-TODAY)/(864e5));}
@@ -1601,14 +1643,14 @@ function calNext(){calMonth++;if(calMonth>11){calMonth=0;calYear++;}renderCal();
 function calToday(){calYear=new Date().getFullYear();calMonth=new Date().getMonth();renderCal();}
 
 // ===== NAVIGATION =====
-const pageMap={home:'홈',calendar:'전체 달력',consult:'상담 일정','site-reg':'현장 신규등록',gongjung:'공정표','site-plan':'현장별 일정','site-log':'하자 및 특이사항','est-write':'견적 작성','est-list':'견적 목록',contract:'계약서',unitprice:'거래처 단가표',profit:'지출 및 손익계산서',payments:'결제 관리',purchase:'발주서',vendors:'거래처 관리','cust-reg':'고객 등록',customers:'고객 목록',proposal:'제안서',docs:'서류 양식'};
-const ctaMap={'site-reg':'현장 등록','est-write':'저장','est-list':'새 견적',customers:'고객 추가',purchase:'발주 등록',proposal:'제안서 작성','site-log':'기록 추가','site-plan':'일정 추가',consult:'상담 등록',gongjung:'현장 등록'};
+const pageMap={home:'홈','office-expense':'사무실 지출',calendar:'전체 달력',consult:'상담 일정','site-reg':'현장 신규등록',gongjung:'공정표','site-plan':'현장별 일정','site-log':'하자 및 특이사항','est-write':'견적 작성','est-list':'견적 목록',contract:'계약서',unitprice:'거래처 단가표',profit:'지출 및 손익계산서',payments:'결제 관리',purchase:'발주서',vendors:'거래처 관리','cust-reg':'고객 등록',customers:'고객 목록',proposal:'제안서',docs:'서류 양식'};
+const ctaMap={'site-reg':'현장 등록','office-expense':'지출 추가','est-write':'저장','est-list':'새 견적',customers:'고객 추가',purchase:'발주 등록',proposal:'제안서 작성','site-log':'기록 추가','site-plan':'일정 추가',consult:'상담 등록',gongjung:'현장 등록'};
 let curPage='home';
 function navTo(id,highlight){const el=document.querySelector(`.sb-i[data-page="${id}"]`);goPage(id,el);if(highlight){setTimeout(()=>{const rows=document.querySelectorAll('#'+id.replace('-','_')+'-tb tr, [id$="-tb"] tr');const tb=document.getElementById(id.replace(/[^a-z]/g,'')+'tb')||document.querySelector('#page-'+id+' table tbody');if(tb){tb.querySelectorAll('tr').forEach(r=>r.style.background='');// highlight all rows briefly
 tb.querySelectorAll('tr').forEach(r=>{r.style.transition='background 0s';r.style.background='rgba(230,110,0,0.45)';setTimeout(()=>{r.style.transition='background 0.8s';r.style.background='';setTimeout(()=>{r.style.transition='';},900);},350);});}},300);}}
-function goPage(id,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));const pg=document.getElementById('page-'+id);if(pg)pg.classList.add('on');document.querySelectorAll('.sb-i').forEach(i=>i.classList.remove('on'));if(el)el.classList.add('on');document.getElementById('tb-title').textContent=pageMap[id]||id;document.getElementById('tb-cta-lbl').textContent=ctaMap[id]||'추가';curPage=id;render();if(id==='est-write'){const vd=document.getElementById('ew-valid');if(vd){const d=new Date();d.setMonth(d.getMonth()+1);vd.value=d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');}setTimeout(()=>{const wrap=document.getElementById('ew-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('ew');setTimeout(function(){initAttachWidget('ew');},50);},100);}if(id==='cust-reg'){setTimeout(()=>{const wrap=document.getElementById('cr-plan-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('cr-plan');setTimeout(function(){initAttachWidget('cr-plan');},50);},100);}if(id==='docs'){setTimeout(()=>{const wrap=document.getElementById('doc-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('doc');setTimeout(function(){initAttachWidget('doc');},50);},100);}if(id==='site-reg'){setTimeout(()=>{const wrap=document.getElementById('gj-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('gj');setTimeout(function(){initAttachWidget('gj');},50);},100);}}
+function goPage(id,el){document.querySelectorAll('.page').forEach(p=>p.classList.remove('on'));const pg=document.getElementById('page-'+id);if(pg)pg.classList.add('on');document.querySelectorAll('.sb-i').forEach(i=>i.classList.remove('on'));if(el)el.classList.add('on');document.getElementById('tb-title').textContent=pageMap[id]||id;document.getElementById('tb-cta-lbl').textContent=ctaMap[id]||'추가';curPage=id;render();if(id==='est-write'){const vd=document.getElementById('ew-valid');if(vd){const d=new Date();d.setMonth(d.getMonth()+1);vd.value=d.getFullYear()+'.'+String(d.getMonth()+1).padStart(2,'0')+'.'+String(d.getDate()).padStart(2,'0');}setTimeout(()=>{const wrap=document.getElementById('ew-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('ew');setTimeout(function(){initAttachWidget('ew');},50);},100);}if(id==='cust-reg'){setTimeout(()=>{const wrap=document.getElementById('cr-plan-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('cr-plan');setTimeout(function(){initAttachWidget('cr-plan');},50);},100);}if(id==='docs'){setTimeout(()=>{const wrap=document.getElementById('doc-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('doc');setTimeout(function(){initAttachWidget('doc');},50);},100);}if(id==='office-expense'){renderOE();}if(id==='site-reg'){setTimeout(()=>{const wrap=document.getElementById('gj-attach-wrap');if(wrap&&(!wrap.hasChildNodes()||wrap.innerHTML.trim()===''))wrap.innerHTML=makeAttachWidget('gj');setTimeout(function(){initAttachWidget('gj');},50);},100);}}
 document.querySelectorAll('.sb-i[data-page]').forEach(el=>{el.addEventListener('click',()=>goPage(el.dataset.page,el));});
-function handleCta(){const m={customers:'modal-add-cust',purchase:'modal-add-order',proposal:'modal-add-prop','site-log':'modal-sitelog','site-plan':'modal-add-plan',consult:'modal-add-consult'};const t=m[curPage];if(t)openM(t);else if(curPage==='gongjung'||curPage==='site-reg')navTo('site-reg');}
+function handleCta(){if(curPage==='office-expense'){openAddOE();return;}const m={customers:'modal-add-cust',purchase:'modal-add-order',proposal:'modal-add-prop','site-log':'modal-sitelog','site-plan':'modal-add-plan',consult:'modal-add-consult'};const t=m[curPage];if(t)openM(t);else if(curPage==='gongjung'||curPage==='site-reg')navTo('site-reg');}
 function openM(id){document.getElementById(id).classList.add('open');
 const attachIds={'modal-add-contract':'ct','modal-add-pay':'pay','modal-add-order':'no','modal-edit-est':'ee','modal-add-vp':'vp','modal-add-plan':null};
 const awId=attachIds[id];
@@ -1793,7 +1835,7 @@ function goToTodayCalendar(){
 
 // ===== LOCALSTORAGE 자동저장 =====
 const LS_VERSION = '2.0'; // 버전 변경 시 기존 저장 데이터 초기화
-const LS_KEYS = ['consultList','siteList','siteLogs','estimates','contracts','vpList','profits','payments','orders','proposals','siteplans','vendors','docList','customerDB','calEvents'];
+const LS_KEYS = ['consultList','siteList','siteLogs','estimates','contracts','vpList','profits','payments','orders','proposals','siteplans','vendors','docList','customerDB','calEvents','officeExpenses'];
 
 function saveToLS() {
   try {
@@ -2024,6 +2066,157 @@ function toggleCalEventDone(i){
   if(!calEvents[i])return;
   calEvents[i].done=!calEvents[i].done;
   renderCal();renderTodo();triggerSave();
+}
+
+
+// ===== 사무실 지출 =====
+let _oeFilter='전체';
+function applyFixedExpenses(){
+  // 고정지출 자동 반복: 이번달에 해당 날짜 항목이 없으면 자동 생성
+  const now=new Date();
+  const yy=now.getFullYear();
+  const mm=String(now.getMonth()+1).padStart(2,'0');
+  const thisMonthPrefix=yy+'.'+mm+'.';
+  const fixedItems=officeExpenses.filter(e=>e.type==='고정지출'&&e.fixedDay);
+  // 중복 방지: 이미 이번달에 같은 fixedDay+title 항목이 있으면 스킵
+  fixedItems.forEach(e=>{
+    const targetDate=thisMonthPrefix+String(e.fixedDay).padStart(2,'0');
+    const alreadyExists=officeExpenses.some(x=>
+      x.type==='고정지출'&&x.title===e.title&&x.amt===e.amt&&x.date===targetDate
+    );
+    if(!alreadyExists&&e.date!==targetDate){
+      officeExpenses.unshift({
+        date:targetDate,
+        type:'고정지출',
+        title:e.title,
+        amt:e.amt,
+        memo:e.memo,
+        fixedDay:e.fixedDay,
+        autoGenerated:true
+      });
+    }
+  });
+}
+function renderOE(){
+  applyFixedExpenses();
+  const tb=document.getElementById('oe-tb');
+  const empty=document.getElementById('oe-empty');
+  if(!tb)return;
+  const yv=(document.getElementById('oe-year')||{}).value||'';
+  const mv=(document.getElementById('oe-month')||{}).value||'';
+  let filtered=officeExpenses.filter(e=>{
+    if(yv&&!(e.date||'').startsWith(yv))return false;
+    if(mv){const mn=mv.replace('월','');if((parseInt((e.date||'').slice(5,7)))!==parseInt(mn))return false;}
+    return true;
+  });
+  if(_oeFilter!=='전체')filtered=filtered.filter(e=>e.type===_oeFilter);
+  // 통계
+  const thisMonth=new Date().getFullYear()+'.'+String(new Date().getMonth()+1).padStart(2,'0');
+  const thisMonthItems=officeExpenses.filter(e=>(e.date||'').startsWith(thisMonth));
+  const totalMonth=thisMonthItems.reduce((s,e)=>s+(e.amt||0),0);
+  const normalTotal=officeExpenses.filter(e=>e.type==='일반').reduce((s,e)=>s+(e.amt||0),0);
+  const fixedTotal=officeExpenses.filter(e=>e.type==='고정지출').reduce((s,e)=>s+(e.amt||0),0);
+  const policyTotal=officeExpenses.filter(e=>e.type==='정책자금').reduce((s,e)=>s+(e.amt||0),0);
+  const fmtW=(id,v)=>{const el=document.getElementById(id);if(el)el.innerHTML=Math.round(v/10000).toLocaleString()+'<span class="unit">만원</span>';};
+  fmtW('oe-stat-total',totalMonth);fmtW('oe-stat-normal',normalTotal);fmtW('oe-stat-fixed',fixedTotal);fmtW('oe-stat-policy',policyTotal);
+  // 필터 합계
+  const filterSum=filtered.reduce((s,e)=>s+(e.amt||0),0);
+  const sumEl=document.getElementById('oe-sum-display');
+  if(sumEl)sumEl.textContent=_oeFilter==='전체'?'전체 합계: '+filterSum.toLocaleString()+'원':_oeFilter+' 합계: '+filterSum.toLocaleString()+'원';
+  if(!filtered.length){tb.innerHTML='';if(empty)empty.style.display='block';return;}
+  if(empty)empty.style.display='none';
+  tb.innerHTML=filtered.map(e=>{
+    const ri=officeExpenses.indexOf(e);
+    const typeColor=e.type==='정책자금'?'var(--blue-t)':e.type==='고정지출'?'var(--red-t)':'var(--text2)';
+    const typeBg=e.type==='정책자금'?'var(--blue-lt)':e.type==='고정지출'?'var(--red-lt)':'var(--bg3)';
+    const attachHtml=e.attachData?awDisplayBtn(e.attachData,'첨부'):'<span style="font-size:11px;color:var(--text3)">—</span>';
+    return`<tr>
+      <td style="font-size:11px;color:var(--text3)">${e.date||'—'}</td>
+      <td style="font-weight:600">${e.title||'—'}</td>
+      <td style="font-weight:700;color:var(--acc)">${(e.amt||0).toLocaleString()}원</td>
+      <td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td>
+      <td><select class="inline-sel" onchange="officeExpenses[${ri}].repay=this.value;triggerSave()"><option value=""${!e.repay?' selected':''}>—</option><option value="진행중"${e.repay==='진행중'?' selected':''}>진행중</option><option value="완료"${e.repay==='완료'?' selected':''}>완료</option></select></td>
+      <td>${attachHtml}</td>
+      <td><span class="bd" style="color:${typeColor};border-color:${typeColor};background:${typeBg};font-size:10px">${e.type||'일반'}</span></td>
+      <td style="white-space:nowrap">
+        <button class="icon-btn" onclick="openEditOE(${ri})" title="수정"><i class="ti ti-edit"></i></button>
+        <button class="icon-btn" onclick="delOE(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+function filterOE(type){
+  _oeFilter=type;
+  ['전체','일반','고정지출','정책자금','개인사용'].forEach(t=>{
+    const btn=document.getElementById('oef-tab-'+t);
+    if(btn)btn.classList.toggle('on',t===type);
+  });
+  renderOE();
+}
+function openAddOE(){
+  const today=new Date().toISOString().slice(0,10);
+  document.getElementById('oe-date').value=today;
+  document.getElementById('oe-title').value='';
+  document.getElementById('oe-amt').value='';
+  document.getElementById('oe-memo').value='';
+  document.getElementById('oe-type').value='일반';
+  openM('modal-add-oe');
+  setTimeout(()=>{const w=document.getElementById('oe-attach-wrap');if(w){w.innerHTML=makeAttachWidget('oe');initAttachWidget('oe');}},100);
+}
+function saveOE(){
+  const t=document.getElementById('oe-title').value.trim();
+  if(!t){alert('지출 항목을 입력하세요.');return;}
+  const a=Number(document.getElementById('oe-amt').value);
+  if(!a){alert('금액을 입력하세요.');return;}
+  const d=document.getElementById('oe-date').value;
+  if(!d){alert('결제일을 선택하세요.');return;}
+  const awOe=awGetData('oe');
+  const oeType=document.getElementById('oe-type').value;
+  const dayNum=parseInt(d.split('-')[2])||1;
+  officeExpenses.unshift({
+    date:dateToKo(d),
+    type:oeType,
+    title:t,
+    amt:a,
+    memo:document.getElementById('oe-memo').value,
+    repay:document.getElementById('oe-repay').value||'',
+    attachData:awOe,
+    fixedDay:oeType==='고정지출'?dayNum:null  // 고정지출: 매달 반복할 날짜 저장
+  });
+  renderOE();triggerSave();closeM('modal-add-oe');
+}
+function openEditOE(i){
+  const e=officeExpenses[i];if(!e)return;
+  document.getElementById('eoe-idx').value=i;
+  document.getElementById('eoe-date').value=(e.date||'').replace(/\./g,'-');
+  document.getElementById('eoe-type').value=e.type||'일반';
+  document.getElementById('eoe-title').value=e.title||'';
+  document.getElementById('eoe-amt').value=e.amt||0;
+  document.getElementById('eoe-memo').value=e.memo||'';
+  document.getElementById('eoe-repay').value=e.repay||'';
+  openM('modal-edit-oe');
+  setTimeout(()=>{const w=document.getElementById('eoe-attach-wrap');if(w){w.innerHTML=makeAttachWidget('eoe');initAttachWidget('eoe');}if(e.attachData)awRestore('eoe',e.attachData);},100);
+}
+function saveEditOE(){
+  const i=Number(document.getElementById('eoe-idx').value);
+  if(!officeExpenses[i])return;
+  const e=officeExpenses[i];
+  const t=document.getElementById('eoe-title').value.trim();
+  if(!t){alert('지출 항목을 입력하세요.');return;}
+  e.date=dateToKo(document.getElementById('eoe-date').value)||e.date;
+  e.type=document.getElementById('eoe-type').value;
+  e.title=t;
+  e.amt=Number(document.getElementById('eoe-amt').value)||0;
+  e.memo=document.getElementById('eoe-memo').value;
+  e.repay=document.getElementById('eoe-repay').value||'';
+  const awEoe=awGetData('eoe');if(awEoe){e.attachData=awEoe;}
+  renderOE();triggerSave();closeM('modal-edit-oe');
+}
+function delOE(i){
+  if(!confirm('삭제하시겠습니까?'))return;
+  officeExpenses.splice(i,1);
+  renderOE();triggerSave();
+  const m=document.getElementById('modal-edit-oe');if(m)m.classList.remove('open');
 }
 
 // ===== 관리 CRUD 함수 =====
@@ -2309,6 +2502,46 @@ setTimeout(saveToLS, 1000);
       <button class="btn btn-xs" style="color:var(--red-t);border-color:var(--red-lt);margin-right:auto" onclick="delCalEvent(Number(document.getElementById('ecal-idx').value));closeM('modal-edit-cal')"><i class="ti ti-trash"></i> 삭제</button>
       <button class="btn" onclick="closeM('modal-edit-cal')">취소</button>
       <button class="btn btn-g" onclick="saveEditCalEvent()"><i class="ti ti-device-floppy"></i> 저장</button>
+    </div>
+  </div>
+</div></div>
+
+<div class="modal-bg" id="modal-add-oe"><div class="modal" style="max-width:480px">
+  <div class="mh"><span class="mt"><i class="ti ti-plus"></i> 사무실 지출 추가</span><button class="xb" onclick="closeM('modal-add-oe')"><i class="ti ti-x"></i></button></div>
+  <div class="mb">
+    <div class="g2">
+      <div class="fg"><label class="fl">결제일 *</label><input type="date" id="oe-date" class="date-pick"></div>
+      <div class="fg"><label class="fl">상태 *</label><select id="oe-type"><option value="일반">일반</option><option value="고정지출">고정지출</option><option value="정책자금">정책자금</option><option value="개인사용">개인사용</option></select></div>
+    </div>
+    <div class="fg"><label class="fl">지출 항목 *</label><input type="text" id="oe-title" placeholder="예: 사무용품비, 임대료"></div>
+    <div class="fg"><label class="fl">지출 금액 (원) *</label><input type="number" id="oe-amt" placeholder="0"></div>
+    <div class="fg"><label class="fl">내용</label><textarea id="oe-memo" rows="2" placeholder="내용 (선택)"></textarea></div>
+    <div class="fg"><label class="fl">상환</label><select id="oe-repay"><option value="">—</option><option value="진행중">진행중</option><option value="완료">완료</option></select></div>
+    <div class="fg"><label class="fl"><i class="ti ti-paperclip" style="font-size:12px;color:var(--acc)"></i> 첨부 파일</label><div id="oe-attach-wrap"></div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" onclick="closeM('modal-add-oe')">취소</button>
+      <button class="btn btn-g" onclick="saveOE()"><i class="ti ti-device-floppy"></i> 저장</button>
+    </div>
+  </div>
+</div></div>
+
+<div class="modal-bg" id="modal-edit-oe"><div class="modal" style="max-width:480px">
+  <div class="mh"><span class="mt"><i class="ti ti-edit"></i> 사무실 지출 수정</span><button class="xb" onclick="closeM('modal-edit-oe')"><i class="ti ti-x"></i></button></div>
+  <div class="mb">
+    <input type="hidden" id="eoe-idx">
+    <div class="g2">
+      <div class="fg"><label class="fl">결제일 *</label><input type="date" id="eoe-date" class="date-pick"></div>
+      <div class="fg"><label class="fl">상태 *</label><select id="eoe-type"><option value="일반">일반</option><option value="고정지출">고정지출</option><option value="정책자금">정책자금</option><option value="개인사용">개인사용</option></select></div>
+    </div>
+    <div class="fg"><label class="fl">지출 항목 *</label><input type="text" id="eoe-title"></div>
+    <div class="fg"><label class="fl">지출 금액 (원) *</label><input type="number" id="eoe-amt"></div>
+    <div class="fg"><label class="fl">내용</label><textarea id="eoe-memo" rows="2"></textarea></div>
+    <div class="fg"><label class="fl">상환</label><select id="eoe-repay"><option value="">—</option><option value="진행중">진행중</option><option value="완료">완료</option></select></div>
+    <div class="fg"><label class="fl"><i class="ti ti-paperclip" style="font-size:12px;color:var(--acc)"></i> 첨부 파일</label><div id="eoe-attach-wrap"></div></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-xs" style="color:var(--red-t);border-color:var(--red-lt);margin-right:auto" onclick="delOE(Number(document.getElementById('eoe-idx').value))"><i class="ti ti-trash"></i> 삭제</button>
+      <button class="btn" onclick="closeM('modal-edit-oe')">취소</button>
+      <button class="btn btn-g" onclick="saveEditOE()"><i class="ti ti-device-floppy"></i> 저장</button>
     </div>
   </div>
 </div></div>
