@@ -2181,8 +2181,7 @@ function openAddOE(){
 function saveOE(){
   const t=document.getElementById('oe-title').value.trim();
   if(!t){alert('지출 항목을 입력하세요.');return;}
-  const a=Number(document.getElementById('oe-amt').value);
-  if(!a){alert('금액을 입력하세요.');return;}
+  const a=Number(document.getElementById('oe-amt').value)||0;
   const d=document.getElementById('oe-date').value;
   if(!d){alert('결제일을 선택하세요.');return;}
   const awOe=awGetData('oe');
