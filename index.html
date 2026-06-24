@@ -1192,7 +1192,8 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
     <table><thead><tr>
       <th style="width:100px">결제일</th>
       <th style="width:140px">지출 항목</th>
-      <th style="width:120px">지출 금액</th>
+      <th style="width:110px">지출 금액</th>
+      <th style="width:110px">상환 금액</th>
       <th>내용</th>
       <th style="width:80px">상환</th>
       <th style="width:80px">첨부</th>
@@ -2114,21 +2115,26 @@ function renderOE(){window._awImgCache=[];window._awLnkCache=[];
   // 통계
   const thisMonth=new Date().getFullYear()+'.'+String(new Date().getMonth()+1).padStart(2,'0');
   const thisMonthItems=officeExpenses.filter(e=>(e.date||'').startsWith(thisMonth));
-  const totalMonth=thisMonthItems.reduce((s,e)=>s+(e.amt||0),0);
+  const totalMonth=thisMonthItems.reduce((s,e)=>s+(e.amt||0)-(e.repayAmt||0),0);
   const normalTotal=officeExpenses.filter(e=>e.type==='일반').reduce((s,e)=>s+(e.amt||0),0);
   const fixedTotal=officeExpenses.filter(e=>e.type==='고정지출').reduce((s,e)=>s+(e.amt||0),0);
   const policyTotal=officeExpenses.filter(e=>e.type==='정책자금').reduce((s,e)=>s+(e.amt||0),0);
   // 개인사용: 전체 합계 - 상환완료 금액 = 미상환 잔액
   const personalAll=officeExpenses.filter(e=>e.type==='개인사용');
   const personalTotal=personalAll.reduce((s,e)=>s+(e.amt||0),0);
-  const personalDone=personalAll.filter(e=>e.repay==='완료').reduce((s,e)=>s+(e.amt||0),0);
+  // 상환금액 직접 입력값 우선, 없으면 상환완료 드롭다운으로 판단
+  const personalDone=personalAll.reduce((s,e)=>{
+    if(e.repayAmt)return s+(e.repayAmt||0);
+    if(e.repay==='완료')return s+(e.amt||0);
+    return s;
+  },0);
   const personalRemain=personalTotal-personalDone;
   const fmtW=(id,v)=>{const el=document.getElementById(id);if(el)el.innerHTML=Math.round(v/10000).toLocaleString()+'<span class="unit">만원</span>';};
   fmtW('oe-stat-total',totalMonth);fmtW('oe-stat-normal',normalTotal);fmtW('oe-stat-fixed',fixedTotal);fmtW('oe-stat-policy',policyTotal);fmtW('oe-stat-personal',personalRemain);
   const subEl=document.getElementById('oe-stat-personal-sub');
   if(subEl)subEl.textContent=personalDone>0?'상환완료 '+Math.round(personalDone/10000).toLocaleString()+'만원':'';
   // 필터 합계
-  const filterSum=filtered.reduce((s,e)=>s+(e.amt||0),0);
+  const filterSum=filtered.reduce((s,e)=>s+(e.amt||0)-(e.repayAmt||0),0);
   const sumEl=document.getElementById('oe-sum-display');
   if(sumEl)sumEl.textContent=_oeFilter==='전체'?'전체 합계: '+filterSum.toLocaleString()+'원':_oeFilter+' 합계: '+filterSum.toLocaleString()+'원';
   if(!filtered.length){tb.innerHTML='';if(empty)empty.style.display='block';return;}
@@ -2142,6 +2148,7 @@ function renderOE(){window._awImgCache=[];window._awLnkCache=[];
       <td style="font-size:11px;color:var(--text3)">${e.date||'—'}</td>
       <td style="font-weight:600">${e.title||'—'}</td>
       <td style="font-weight:700;color:var(--acc)">${(e.amt||0).toLocaleString()}원</td>
+      <td style="font-weight:600;color:var(--teal-t)">${e.repayAmt?e.repayAmt.toLocaleString()+'원':'—'}</td>
       <td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td>
       <td><select class="inline-sel" onchange="officeExpenses[${ri}].repay=this.value;triggerSave();renderOE()"><option value=""${!e.repay?' selected':''}>—</option><option value="진행중"${e.repay==='진행중'?' selected':''}>진행중</option><option value="완료"${e.repay==='완료'?' selected':''}>완료</option></select></td>
       <td>${attachHtml}</td>
@@ -2188,6 +2195,7 @@ function saveOE(){
     amt:a,
     memo:document.getElementById('oe-memo').value,
     repay:document.getElementById('oe-repay').value||'',
+    repayAmt:Number(document.getElementById('oe-repay-amt').value)||0,
     attachData:awOe,
     fixedDay:oeType==='고정지출'?dayNum:null  // 고정지출: 매달 반복할 날짜 저장
   });
@@ -2202,6 +2210,7 @@ function openEditOE(i){
   document.getElementById('eoe-amt').value=e.amt||0;
   document.getElementById('eoe-memo').value=e.memo||'';
   document.getElementById('eoe-repay').value=e.repay||'';
+  document.getElementById('eoe-repay-amt').value=e.repayAmt||0;
   openM('modal-edit-oe');
   setTimeout(()=>{const w=document.getElementById('eoe-attach-wrap');if(w){w.innerHTML=makeAttachWidget('eoe');initAttachWidget('eoe');}if(e.attachData)awRestore('eoe',e.attachData);},100);
 }
@@ -2217,6 +2226,7 @@ function saveEditOE(){
   e.amt=Number(document.getElementById('eoe-amt').value)||0;
   e.memo=document.getElementById('eoe-memo').value;
   e.repay=document.getElementById('eoe-repay').value||'';
+  e.repayAmt=Number(document.getElementById('eoe-repay-amt').value)||0;
   const awEoe=awGetData('eoe');if(awEoe){e.attachData=awEoe;}
   renderOE();triggerSave();closeM('modal-edit-oe');
 }
@@ -2523,6 +2533,7 @@ setTimeout(saveToLS, 1000);
     </div>
     <div class="fg"><label class="fl">지출 항목 *</label><input type="text" id="oe-title" placeholder="예: 사무용품비, 임대료"></div>
     <div class="fg"><label class="fl">지출 금액 (원) *</label><input type="number" id="oe-amt" placeholder="0"></div>
+    <div class="fg"><label class="fl">상환 금액 (원) <span style="font-size:10px;color:var(--text3)">(지출 합계에서 제외)</span></label><input type="number" id="oe-repay-amt" placeholder="0"></div>
     <div class="fg"><label class="fl">내용</label><textarea id="oe-memo" rows="2" placeholder="내용 (선택)"></textarea></div>
     <div class="fg"><label class="fl">상환</label><select id="oe-repay"><option value="">—</option><option value="진행중">진행중</option><option value="완료">완료</option></select></div>
     <div class="fg"><label class="fl"><i class="ti ti-paperclip" style="font-size:12px;color:var(--acc)"></i> 첨부 파일</label><div id="oe-attach-wrap"></div></div>
@@ -2543,6 +2554,7 @@ setTimeout(saveToLS, 1000);
     </div>
     <div class="fg"><label class="fl">지출 항목 *</label><input type="text" id="eoe-title"></div>
     <div class="fg"><label class="fl">지출 금액 (원) *</label><input type="number" id="eoe-amt"></div>
+    <div class="fg"><label class="fl">상환 금액 (원) <span style="font-size:10px;color:var(--text3)">(지출 합계에서 제외)</span></label><input type="number" id="eoe-repay-amt" placeholder="0"></div>
     <div class="fg"><label class="fl">내용</label><textarea id="eoe-memo" rows="2"></textarea></div>
     <div class="fg"><label class="fl">상환</label><select id="eoe-repay"><option value="">—</option><option value="진행중">진행중</option><option value="완료">완료</option></select></div>
     <div class="fg"><label class="fl"><i class="ti ti-paperclip" style="font-size:12px;color:var(--acc)"></i> 첨부 파일</label><div id="eoe-attach-wrap"></div></div>
