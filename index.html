@@ -1167,11 +1167,12 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
 
 <!-- 사무실 지출 -->
 <div id="page-office-expense" class="page">
-  <div class="stats" style="grid-template-columns:repeat(4,1fr)">
+  <div class="stats" style="grid-template-columns:repeat(5,1fr)">
     <div class="stat"><div class="stat-lbl" id="oe-lbl-period">이번 달 지출</div><div class="stat-val" id="oe-stat-total">—<span class="unit">만원</span></div></div>
     <div class="stat"><div class="stat-lbl">일반 지출</div><div class="stat-val" id="oe-stat-normal">—<span class="unit">만원</span></div></div>
     <div class="stat red"><div class="stat-lbl">고정 지출</div><div class="stat-val" id="oe-stat-fixed">—<span class="unit">만원</span></div></div>
     <div class="stat green"><div class="stat-lbl">정책자금</div><div class="stat-val" id="oe-stat-policy">—<span class="unit">만원</span></div></div>
+    <div class="stat"><div class="stat-lbl">개인사용 <span style="font-size:9px;color:var(--text3)">(미상환)</span></div><div class="stat-val" id="oe-stat-personal">—<span class="unit">만원</span></div><div class="stat-sub" id="oe-stat-personal-sub" style="font-size:10px;color:var(--text3)"></div></div>
   </div>
   <div class="card">
     <div class="card-h">
@@ -2117,8 +2118,15 @@ function renderOE(){window._awImgCache=[];window._awLnkCache=[];
   const normalTotal=officeExpenses.filter(e=>e.type==='일반').reduce((s,e)=>s+(e.amt||0),0);
   const fixedTotal=officeExpenses.filter(e=>e.type==='고정지출').reduce((s,e)=>s+(e.amt||0),0);
   const policyTotal=officeExpenses.filter(e=>e.type==='정책자금').reduce((s,e)=>s+(e.amt||0),0);
+  // 개인사용: 전체 합계 - 상환완료 금액 = 미상환 잔액
+  const personalAll=officeExpenses.filter(e=>e.type==='개인사용');
+  const personalTotal=personalAll.reduce((s,e)=>s+(e.amt||0),0);
+  const personalDone=personalAll.filter(e=>e.repay==='완료').reduce((s,e)=>s+(e.amt||0),0);
+  const personalRemain=personalTotal-personalDone;
   const fmtW=(id,v)=>{const el=document.getElementById(id);if(el)el.innerHTML=Math.round(v/10000).toLocaleString()+'<span class="unit">만원</span>';};
-  fmtW('oe-stat-total',totalMonth);fmtW('oe-stat-normal',normalTotal);fmtW('oe-stat-fixed',fixedTotal);fmtW('oe-stat-policy',policyTotal);
+  fmtW('oe-stat-total',totalMonth);fmtW('oe-stat-normal',normalTotal);fmtW('oe-stat-fixed',fixedTotal);fmtW('oe-stat-policy',policyTotal);fmtW('oe-stat-personal',personalRemain);
+  const subEl=document.getElementById('oe-stat-personal-sub');
+  if(subEl)subEl.textContent=personalDone>0?'상환완료 '+Math.round(personalDone/10000).toLocaleString()+'만원':'';
   // 필터 합계
   const filterSum=filtered.reduce((s,e)=>s+(e.amt||0),0);
   const sumEl=document.getElementById('oe-sum-display');
@@ -2135,7 +2143,7 @@ function renderOE(){window._awImgCache=[];window._awLnkCache=[];
       <td style="font-weight:600">${e.title||'—'}</td>
       <td style="font-weight:700;color:var(--acc)">${(e.amt||0).toLocaleString()}원</td>
       <td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td>
-      <td><select class="inline-sel" onchange="officeExpenses[${ri}].repay=this.value;triggerSave()"><option value=""${!e.repay?' selected':''}>—</option><option value="진행중"${e.repay==='진행중'?' selected':''}>진행중</option><option value="완료"${e.repay==='완료'?' selected':''}>완료</option></select></td>
+      <td><select class="inline-sel" onchange="officeExpenses[${ri}].repay=this.value;triggerSave();renderOE()"><option value=""${!e.repay?' selected':''}>—</option><option value="진행중"${e.repay==='진행중'?' selected':''}>진행중</option><option value="완료"${e.repay==='완료'?' selected':''}>완료</option></select></td>
       <td>${attachHtml}</td>
       <td><span class="bd" style="color:${typeColor};border-color:${typeColor};background:${typeBg};font-size:10px">${e.type||'일반'}</span></td>
       <td style="white-space:nowrap">
