@@ -37,7 +37,14 @@
   function applyData(d) {
     FS_KEYS.forEach(k => {
       if (d[k] !== undefined && Array.isArray(d[k])) {
-        try { eval(k + ' = d[k]'); } catch(e) {}
+        try {
+          // Firestore에 해당 키 데이터가 있을 때만 덮어씀
+          // 단, 로컬에 더 많은 데이터가 있으면 유지
+          const local = (function(){ try{return eval(k)||[];}catch(e){return[];} })();
+          if (d[k].length > 0 || local.length === 0) {
+            eval(k + ' = d[k]');
+          }
+        } catch(e) {}
       }
     });
   }
@@ -77,43 +84,51 @@
   window.fsListen = function() {
     onSnapshot(DOC_REF, (snap) => {
       if (!snap.exists()) return;
-
       const d = snap.data();
 
-      // 안전장치 1: 내가 방금 저장한 건 무시 (3초 이내)
+      // 안전장치 1: 내가 방금 저장한 건 무시 (5초)
       if (window._fsSaving) return;
-      if (d._savedBy === SESSION_ID && (Date.now() - window._fsLastSaveTime) < 3000) return;
+      if (d._savedBy === SESSION_ID && (Date.now() - window._fsLastSaveTime) < 5000) return;
 
-      // 안전장치 2: 빈 데이터가 오면 무시 (실수로 빈 배열 덮어쓰기 방지)
+      // 안전장치 2: 빈 데이터 무시
       const hasData = FS_KEYS.some(k => Array.isArray(d[k]) && d[k].length > 0);
-      if (!hasData) {
-        console.warn('⚠️ 빈 Firestore 데이터 무시 — 현재 데이터 보존');
+      if (!hasData) { console.warn('⚠️ 빈 데이터 무시'); return; }
+
+      // 안전장치 3: 키별로 로컬이 더 많으면 해당 키 덮어쓰지 않음
+      const CORE_KEYS = ['consultList','siteList','estimates','contracts','vpList','profits','payments','orders','siteplans','vendors','docList','customerDB'];
+      const localTotal = CORE_KEYS.reduce((s,k)=>{try{return s+(eval(k)||[]).length;}catch(e){return s;}},0);
+      const remoteTotal = CORE_KEYS.reduce((s,k)=>s+(Array.isArray(d[k])?d[k].length:0),0);
+
+      // 전체 로컬이 원격보다 많으면 완전 차단
+      if (localTotal > remoteTotal) {
+        console.warn('⚠️ 로컬 데이터가 더 많음 — 동기화 차단', {local:localTotal, remote:remoteTotal});
         return;
       }
 
-      // 안전장치 3: 현재 로컬 데이터가 더 많으면 무시
-      const localCount = FS_KEYS.reduce((sum, k) => {
-        try { return sum + (eval(k)||[]).length; } catch(e) { return sum; }
-      }, 0);
-      const remoteCount = FS_KEYS.reduce((sum, k) => sum + (Array.isArray(d[k]) ? d[k].length : 0), 0);
+      // 키별 보호: 로컬이 더 많은 키는 덮어쓰지 않음
+      FS_KEYS.forEach(k => {
+        if (d[k] === undefined) return;
+        if (!Array.isArray(d[k])) return;
+        try {
+          const localLen = (eval(k)||[]).length;
+          const remoteLen = d[k].length;
+          if (remoteLen >= localLen) {
+            eval(k + ' = d[k]');
+          } else {
+            console.warn('⚠️ '+k+' 로컬('+localLen+') > 원격('+remoteLen+') — 보존');
+          }
+        } catch(e) {}
+      });
 
-      if (localCount > remoteCount + 5) {
-        console.warn('⚠️ 원격 데이터가 로컬보다 적음 — 동기화 건너뜀', {local: localCount, remote: remoteCount});
-        return;
-      }
-
-      // 안전하게 적용
-      applyData(d);
       render();
       renderCustRegList();
-
       const ind = document.getElementById('ls-indicator');
       if (ind) {
         ind.textContent = '🔄 다른 기기에서 업데이트됨';
         ind.style.color = 'var(--blue)';
-        setTimeout(() => { if(ind) { ind.style.color = 'var(--text3)'; ind.textContent = '저장됨'; } }, 3000);
+        setTimeout(() => { if(ind){ind.style.color='var(--text3)';ind.textContent='저장됨';} }, 3000);
       }
-      console.log('🔄 실시간 동기화 반영', {local: localCount, remote: remoteCount});
+      console.log('🔄 동기화 반영', {local:localTotal, remote:remoteTotal});
     });
   };
 
@@ -122,10 +137,19 @@
     const ind = document.getElementById('ls-indicator');
     if (ind) { ind.textContent = '불러오는 중...'; ind.style.color = 'var(--amber)'; }
 
+    // localStorage 먼저 로드 (빠른 초기 렌더링)
+    const hadLocalData = loadFromLS();
+    if (hadLocalData) {
+      render();
+      renderCustRegList();
+    }
+    // Firestore에서 최신 데이터 로드 (병합)
     const loaded = await window.fsLoad();
     if (loaded) {
       render();
       renderCustRegList();
+      setupAllAutocomplete();
+    } else if (hadLocalData) {
       setupAllAutocomplete();
     }
 
@@ -1272,11 +1296,11 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
   </div>
 </div></div>
 
-<div class="modal-bg" id="modal-cost"><div class="modal" style="max-width:700px">
+<div class="modal-bg" id="modal-cost"><div class="modal" style="max-width:960px;max-height:90vh;display:flex;flex-direction:column">
   <div class="mh"><span class="mt" id="cost-mt">지출 상세</span><button class="xb" onclick="closeM('modal-cost')"><i class="ti ti-x"></i></button></div>
-  <div class="mb">
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px"><span style="font-size:12px;color:var(--text2)">지출 항목 입력 시 합계 자동 계산</span><button class="btn btn-g btn-sm" onclick="addCostRow()"><i class="ti ti-plus"></i> 항목 추가</button></div>
-    <table><thead><tr><th style="width:120px">지출 날짜</th><th style="width:90px">결제자명</th><th style="width:90px">공정</th><th>내용</th><th style="width:110px">금액 (원)</th><th style="width:90px">영수증</th><th style="width:45px">삭제</th></tr></thead><tbody id="cost-tb"></tbody></table>
+  <div class="mb" style="overflow-y:auto;flex:1">
+    <div style="margin-bottom:10px"><div style="display:flex;align-items:center;gap:4px;flex-wrap:wrap;margin-bottom:8px"><span style="font-size:10px;color:var(--text3);font-weight:600;flex-shrink:0">공정:</span><button class="btn btn-sm on" id="cwf-전체" onclick="filterCostWork2('전체')" style="font-size:10px;padding:2px 7px;background:var(--acc);color:#fff">전체</button><button class="btn btn-sm" id="cwf-철거" onclick="filterCostWork2('철거')" style="font-size:10px;padding:2px 7px">철거</button><button class="btn btn-sm" id="cwf-설비" onclick="filterCostWork2('설비')" style="font-size:10px;padding:2px 7px">설비</button><button class="btn btn-sm" id="cwf-샷시" onclick="filterCostWork2('샷시')" style="font-size:10px;padding:2px 7px">샷시</button><button class="btn btn-sm" id="cwf-전기" onclick="filterCostWork2('전기')" style="font-size:10px;padding:2px 7px">전기</button><button class="btn btn-sm" id="cwf-목공" onclick="filterCostWork2('목공')" style="font-size:10px;padding:2px 7px">목공</button><button class="btn btn-sm" id="cwf-타일" onclick="filterCostWork2('타일')" style="font-size:10px;padding:2px 7px">타일</button><button class="btn btn-sm" id="cwf-필름" onclick="filterCostWork2('필름')" style="font-size:10px;padding:2px 7px">필름</button><button class="btn btn-sm" id="cwf-도배" onclick="filterCostWork2('도배')" style="font-size:10px;padding:2px 7px">도배</button><button class="btn btn-sm" id="cwf-바닥" onclick="filterCostWork2('바닥')" style="font-size:10px;padding:2px 7px">바닥</button><button class="btn btn-sm" id="cwf-가구" onclick="filterCostWork2('가구')" style="font-size:10px;padding:2px 7px">가구</button><button class="btn btn-sm" id="cwf-욕실" onclick="filterCostWork2('욕실')" style="font-size:10px;padding:2px 7px">욕실</button><button class="btn btn-sm" id="cwf-공조" onclick="filterCostWork2('공조')" style="font-size:10px;padding:2px 7px">공조</button><button class="btn btn-sm" id="cwf-기타" onclick="filterCostWork2('기타')" style="font-size:10px;padding:2px 7px">기타</button><b id="cost-work-total" style="font-size:11px;color:var(--acc);margin-left:6px"></b></div><div style="display:flex;justify-content:flex-end"><button class="btn btn-g btn-sm" onclick="addCostRow()"><i class="ti ti-plus"></i> 항목 추가</button></div></div>
+    <table><thead><tr><th style="width:120px">지출 날짜</th><th style="width:90px">결제자명</th><th style="width:90px">공정</th><th>내용</th><th style="width:110px">금액 (원)</th><th style="width:90px">영수증</th><th style="width:55px">현금</th><th style="width:45px">삭제</th></tr></thead><tbody id="cost-tb"></tbody></table>
     <div style="display:flex;justify-content:flex-end;align-items:center;gap:12px;padding:12px 16px;background:var(--bg3);border-radius:var(--radius);margin-top:12px"><span style="font-size:12px;color:var(--text2)">지출 합계</span><span style="font-size:17px;font-weight:700" id="cost-total">0원</span></div>
     <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><button class="btn" onclick="closeM('modal-cost')">닫기</button><button class="btn btn-g" onclick="saveCost()"><i class="ti ti-device-floppy"></i> 저장</button></div>
   </div>
@@ -1429,7 +1453,7 @@ function inlineAttach(btn,label,dt,idx){const inp=document.createElement('input'
 // ===== MISSING CHECK (제안서 제외) =====
 function getMissing(){const l=[];
 estimates.forEach(e=>{if(!e.file)l.push({who:e.mgr,cust:e.cust||'',item:'견적 목록',what:'견적서 미첨부',sub:e.cust+(e.addr?' | '+e.addr:'')+(e.date?' ('+e.date+')':'')});});
-profits.forEach(p=>{const si=siteList.find(s=>(p.name&&s.name===p.name)||(p.site&&(p.site||'').startsWith(s.name)));const pMgr=p.mgr||(si&&si.mgr)||'—';p.costs.forEach((c,ci)=>{if(!c.receipt){const parts=[];if(c.date)parts.push(c.date);if(c.process)parts.push(c.process);if(c.desc)parts.push(c.desc);if(c.amt)parts.push(c.amt.toLocaleString()+'원');l.push({who:c.payer||pMgr,cust:p.name||p.site||'',item:'지출 손익',what:'영수증 미첨부',sub:(p.name||p.site||'—')+' | '+(parts.join(' / ')||'항목 추가됨')});}});});
+profits.forEach(p=>{const si=siteList.find(s=>(p.name&&s.name===p.name)||(p.site&&(p.site||'').startsWith(s.name)));const pMgr=p.mgr||(si&&si.mgr)||'—';p.costs.forEach((c,ci)=>{if(!c.receipt&&!c.cash){const parts=[];if(c.date)parts.push(c.date);if(c.process)parts.push(c.process);if(c.desc)parts.push(c.desc);if(c.amt)parts.push(c.amt.toLocaleString()+'원');l.push({who:c.payer||pMgr,cust:p.name||p.site||'',item:'지출 손익',what:'영수증 미첨부',sub:(p.name||p.site||'—')+' | '+(parts.join(' / ')||'항목 추가됨')});}});});
 orders.forEach(o=>{if(!o.receipt)l.push({who:o.mgr,cust:o.cust||'',item:'발주서',what:'영수증 미첨부',sub:o.cust+' | '+o.vendor+' | '+o.date});});
 payments.forEach(p=>{if(!p.receipt)l.push({who:p.mgr||'—',cust:p.target||'',item:'결제 관리',what:'영수증 미첨부',sub:p.target+(p.memo?' | '+p.memo:'')+(p.date?' ('+p.date+')':'')});});
 contracts.forEach(c=>{if(!c.file)l.push({who:c.mgr,cust:c.cust||'',item:'계약서',what:'계약서 미첨부',sub:c.cust+(c.addr?' | '+c.addr:'')+(c.date?' ('+c.date+')':'')});});
@@ -1664,7 +1688,7 @@ document.querySelectorAll('.modal-bg').forEach(bg=>{bg.addEventListener('click',
 
 // ===== COST =====
 function openCost(i){curCostIdx=i;document.getElementById('cost-mt').textContent=profits[i].site+' — 지출 상세';renderCost();openM('modal-cost');}
-function renderCost(){const p=profits[curCostIdx];if(!p)return;const tb=document.getElementById('cost-tb');if(!tb)return;tb.innerHTML=p.costs.map((c,i)=>{const dv=c.date?c.date.replace(/\./g,'-'):'';const rcpHtml=c.receipt?(c.receiptURL?`<button class="rcp-btn has" onclick="awOpenCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`:`<button class="rcp-btn has" onclick="viewCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`):`<button class="rcp-btn" onclick="attachCostFileCloud(${curCostIdx},${i},this)"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td><input class="cost-input" type="date" value="${dv}" onchange="profits[${curCostIdx}].costs[${i}].date=this.value.replace(/-/g,'.');calcCost()" style="width:115px;border:1px solid var(--border2);border-radius:5px;padding:4px 6px;font-size:11px;background:#fff;color:var(--text);cursor:pointer"></td><td><input class="cost-input" type="text" value="${c.payer||''}" placeholder="결제자" onchange="profits[${curCostIdx}].costs[${i}].payer=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.process}" onchange="profits[${curCostIdx}].costs[${i}].process=this.value" style="width:100%"></td><td><input class="cost-input" type="text" value="${c.desc}" onchange="profits[${curCostIdx}].costs[${i}].desc=this.value" style="width:100%"></td><td><input class="cost-input" type="number" value="${c.amt}" onchange="profits[${curCostIdx}].costs[${i}].amt=Number(this.value);calcCost()" style="width:100%"></td><td>${rcpHtml}</td><td><button class="icon-btn" onclick="delCost(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');calcCost();}
+function renderCost(){const p=profits[curCostIdx];if(!p)return;const tb=document.getElementById('cost-tb');if(!tb)return;tb.innerHTML=p.costs.map((c,i)=>{const dv=c.date?c.date.replace(/\./g,'-'):'';const rcpHtml=c.receipt?(c.receiptURL?`<button class="rcp-btn has" onclick="awOpenCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`:`<button class="rcp-btn has" onclick="viewCostFile(${curCostIdx},${i})"><i class="ti ti-file-check"></i> 보기</button>`):`<button class="rcp-btn" onclick="attachCostFileCloud(${curCostIdx},${i},this)"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td><input class="cost-input" type="date" value="${dv}" onchange="profits[${curCostIdx}].costs[${i}].date=this.value.replace(/-/g,'.');calcCost()" style="width:115px;border:1px solid var(--border2);border-radius:5px;padding:4px 6px;font-size:11px;background:#fff;color:var(--text);cursor:pointer"></td><td><input class="cost-input" type="text" value="${c.payer||''}" placeholder="결제자" onchange="profits[${curCostIdx}].costs[${i}].payer=this.value" style="width:100%"></td><td><select class="cost-input" onchange="profits[${curCostIdx}].costs[${i}].process=this.value;triggerSave()" style="width:100%;font-size:11px"><option value="">공정</option><option value="철거"${c.process==='철거'?' selected':''}>철거</option><option value="설비"${c.process==='설비'?' selected':''}>설비</option><option value="샷시"${c.process==='샷시'?' selected':''}>샷시</option><option value="전기"${c.process==='전기'?' selected':''}>전기</option><option value="목공"${c.process==='목공'?' selected':''}>목공</option><option value="타일"${c.process==='타일'?' selected':''}>타일</option><option value="필름"${c.process==='필름'?' selected':''}>필름</option><option value="도배"${c.process==='도배'?' selected':''}>도배</option><option value="바닥"${c.process==='바닥'?' selected':''}>바닥</option><option value="가구"${c.process==='가구'?' selected':''}>가구</option><option value="욕실"${c.process==='욕실'?' selected':''}>욕실</option><option value="공조"${c.process==='공조'?' selected':''}>공조</option><option value="기타"${c.process==='기타'?' selected':''}>기타</option></select></td><td><input class="cost-input" type="text" value="${c.desc}" onchange="profits[${curCostIdx}].costs[${i}].desc=this.value" style="width:100%"></td><td><input class="cost-input" type="number" value="${c.amt}" onchange="profits[${curCostIdx}].costs[${i}].amt=Number(this.value);calcCost()" style="width:100%"></td><td>${rcpHtml}</td><td style="text-align:center"><label style="display:flex;align-items:center;justify-content:center;gap:4px;cursor:pointer;font-size:11px"><input type="checkbox" ${c.cash?'checked':''} onchange="profits[${curCostIdx}].costs[${i}].cash=this.checked;updateMissing();triggerSave()" style="width:16px;height:16px;cursor:pointer;accent-color:var(--acc)"></label></td><td><button class="icon-btn" onclick="delCost(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');calcCost();}
 function calcCost(){const total=profits[curCostIdx].costs.reduce((a,c)=>a+Number(c.amt),0);document.getElementById('cost-total').textContent=total.toLocaleString()+'원';}
 function attachCostFile(pi,ci,btn){const inp=document.createElement('input');inp.type='file';inp.accept='image/*,.pdf';inp.onchange=(e)=>{if(!e.target.files.length)return;const file=e.target.files[0];profits[pi].costs[ci].receipt=true;profits[pi].costs[ci].receiptName=file.name;profits[pi].costs[ci].receiptURL=URL.createObjectURL(file);btn.className='rcp-btn has';btn.innerHTML='<i class="ti ti-file-check"></i> 보기';btn.onclick=()=>viewCostFile(pi,ci);};inp.click();}
 function awOpenCostFile(pi,ci){const c=profits[pi]&&profits[pi].costs[ci];if(!c||!c.receiptURL)return;openFileUrl(c.receiptURL,c.receiptName||'영수증');}
@@ -1674,7 +1698,26 @@ function openFileUrl(url,name){
   window.open(url,'_blank');
 }
 function viewCostFile(pi,ci){const c=profits[pi]&&profits[pi].costs[ci];if(c&&c.receiptURL){const w=window.open();w.document.write('<img src="'+c.receiptURL+'" style="max-width:100%;"><p>'+( c.receiptName||'영수증')+'</p>');}else{document.getElementById('file-name').textContent=(c&&c.receiptName)||'영수증';openM('modal-file');}}
-function addCostRow(){if(curCostIdx<0)return;profits[curCostIdx].costs.push({date:'',payer:'',process:'',desc:'',amt:0,receipt:false});renderCost();updateMissing();triggerSave();}
+
+function filterCostWork2(work){
+  ['전체','철거','설비','샷시','전기','목공','타일','필름','도배','바닥','가구','욕실','공조','기타'].forEach(function(w){
+    var btn=document.getElementById('cwf-'+w);
+    if(btn){btn.style.background=w===work?'var(--acc)':'';btn.style.color=w===work?'#fff':'';}
+  });
+  var rows=document.querySelectorAll('#cost-tb tr');
+  var sum=0;
+  rows.forEach(function(tr){
+    var sel=tr.querySelector('select.cost-input');
+    var rowWork=sel?sel.value:'';
+    var show=work==='전체'||rowWork===work;
+    tr.style.display=show?'':'none';
+    if(show){var amtInp=tr.querySelector('input[type=number].cost-input');if(amtInp)sum+=Number(amtInp.value)||0;}
+  });
+  var tot=document.getElementById('cost-work-total');
+  if(tot)tot.textContent=work==='전체'?'':work+' 합계: '+sum.toLocaleString()+'원';
+}
+
+function addCostRow(){if(curCostIdx<0)return;profits[curCostIdx].costs.push({date:'',payer:'',process:'',desc:'',amt:0,receipt:false,cash:false});renderCost();updateMissing();triggerSave();}
 function delCost(i){profits[curCostIdx].costs.splice(i,1);renderCost();}
 function saveCost(){closeM('modal-cost');render();updateMissing();triggerSave();}
 
