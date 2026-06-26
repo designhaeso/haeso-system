@@ -38,10 +38,15 @@
     FS_KEYS.forEach(k => {
       if (d[k] !== undefined && Array.isArray(d[k])) {
         try {
-          // Firestore에 해당 키 데이터가 있을 때만 덮어씀
-          // 단, 로컬에 더 많은 데이터가 있으면 유지
           const local = (function(){ try{return eval(k)||[];}catch(e){return[];} })();
-          if (d[k].length > 0 || local.length === 0) {
+          const remoteLen = d[k].length;
+          const localLen = local.length;
+          // 로컬이 더 많으면 절대 덮어쓰지 않음
+          if (localLen > remoteLen) {
+            console.warn('⚠️ applyData: '+k+' 로컬('+localLen+') > 원격('+remoteLen+') — 보존');
+            return;
+          }
+          if (remoteLen > 0 || localLen === 0) {
             eval(k + ' = d[k]');
           }
         } catch(e) {}
@@ -54,7 +59,9 @@
     try {
       const snap = await getDoc(DOC_REF);
       if (snap.exists()) {
-        applyData(snap.data());
+        const d = snap.data();
+        // fsLoad도 applyData 보호 로직 적용
+        applyData(d);
         console.log('✅ Firestore 로드 완료');
         return true;
       }
@@ -143,12 +150,25 @@
       render();
       renderCustRegList();
     }
-    // Firestore에서 최신 데이터 로드 (병합)
+    // Firestore에서 최신 데이터 로드 (보호 로직 적용)
     const loaded = await window.fsLoad();
     if (loaded) {
       render();
       renderCustRegList();
       setupAllAutocomplete();
+      // localStorage 데이터가 Firestore보다 많으면 Firestore에 저장
+      if (hadLocalData) {
+        const CORE_KEYS = ['consultList','siteList','estimates','contracts','vpList','profits','payments','orders','siteplans','vendors','docList','customerDB'];
+        const lsTotal = CORE_KEYS.reduce((s,k)=>{try{return s+(eval(k)||[]).length;}catch(e){return s;}},0);
+        const fsSnap = await getDoc(DOC_REF).catch(()=>null);
+        const fsTotal = fsSnap&&fsSnap.exists() ? CORE_KEYS.reduce((s,k)=>s+((fsSnap.data()[k]||[]).length),0) : 0;
+        if (lsTotal > fsTotal) {
+          console.log('💾 로컬 데이터가 더 많음 — Firestore에 저장', {ls:lsTotal, fs:fsTotal});
+          const dataObj = {};
+          ['consultList','siteList','siteLogs','estimates','contracts','vpList','profits','payments','orders','proposals','siteplans','vendors','docList','customerDB','calEvents','officeExpenses','receiptBox'].forEach(k=>{try{dataObj[k]=eval(k);}catch(e){dataObj[k]=[];}});
+          window.fsSave(dataObj);
+        }
+      }
     } else if (hadLocalData) {
       setupAllAutocomplete();
     }
@@ -480,6 +500,10 @@ function awRefreshUI(id){
 function awRemoveImage(id,i){awInitData(id);window._awData[id].images.splice(i,1);awRefreshUI(id);}
 function awRemoveLink(id,i){awInitData(id);window._awData[id].links.splice(i,1);awRefreshUI(id);}
 
+
+function awOpenUrl(idx){var x=window._awUS&&window._awUS[idx];if(x&&x.data&&x.data[0])window.open(x.data[0].url,'_blank');}
+function awOpenUrls(idx){var x=window._awUS&&window._awUS[idx];if(x&&x.data)awOpenLinkPicker(x.data);}
+
 function awAddLink(id){
   var inp=document.getElementById('aw-'+id+'-link-inp');
   if(!inp)return;
@@ -555,23 +579,22 @@ function awDisplayBtn(data,label){
   else if(data.type==='drive'&&data.driveURL)data={images:[],links:[{url:data.driveURL,name:data.fname||''}]};
   var imgs=data.images||[]; var lnks=data.links||[];
   if(!imgs.length&&!lnks.length)return '<span style="font-size:11px;color:var(--text3)">없음</span>';
+  if(!window._awUS)window._awUS=[];
   var out='<div style="display:flex;gap:6px;align-items:center">';
   if(imgs.length){
-    window._awImgCache=window._awImgCache||[];
-    var ci=window._awImgCache.length; window._awImgCache.push(imgs);
-    out+='<div style="position:relative;cursor:pointer" onclick="awOpenImgViewer(window._awImgCache['+ci+'])" title="이미지 '+imgs.length+'장">';
+    var ci=window._awUS.length; window._awUS.push({type:'imgs',data:imgs});
+    out+='<div style="position:relative;cursor:pointer" onclick="var x=window._awUS['+ci+'];awOpenImgViewer(x?x.data:[])" title="이미지 '+imgs.length+'장">';
     out+='<img src="'+imgs[0].url+'" style="width:34px;height:34px;object-fit:cover;border-radius:5px;border:1px solid var(--border);display:block">';
     if(imgs.length>1)out+='<span style="position:absolute;top:-4px;right:-4px;background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+imgs.length+'</span>';
     out+='</div>';
   }
   if(lnks.length){
-    window._awLnkCache=window._awLnkCache||[];
-    var li=window._awLnkCache.length; window._awLnkCache.push(lnks);
+    var li=window._awUS.length; window._awUS.push({type:'lnks',data:lnks});
     if(lnks.length===1){
-      out+='<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awLinkOpen('+li+',0)" title="'+(lnks[0].name||'파일')+'"><i class="ti ti-file" style="font-size:16px"></i></button>';
+      out+='<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrl('+li+')" title="'+(lnks[0].name||'파일')+'"><i class="ti ti-file" style="font-size:16px"></i></button>';
     }else{
       out+='<div style="position:relative;display:inline-block">';
-      out+='<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenLinkPicker(window._awLnkCache['+li+'])"><i class="ti ti-file" style="font-size:16px"></i></button>';
+      out+='<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:34px;height:34px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrls('+li+')" title="파일 '+lnks.length+'개"><i class="ti ti-file" style="font-size:16px"></i></button>';
       out+='<span style="position:absolute;top:-4px;right:-4px;background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+lnks.length+'</span>';
       out+='</div>';
     }
@@ -579,41 +602,36 @@ function awDisplayBtn(data,label){
   out+='</div>';
   return out;
 }
-
 function awDisplayImgCell(data){
-  if(!data)return '<span style="font-size:11px;color:var(--text3)">—</span>';
+  if(!data)return'<span style="font-size:11px;color:var(--text3)">—</span>';
   if(data.type==='image'&&data.imgURL)data={images:[{url:data.imgURL,name:data.imgName||''}],links:[]};
   else if(data.type==='drive')data={images:[],links:[{url:data.driveURL,name:data.fname||''}]};
   var imgs=data.images||[];
-  if(!imgs.length)return '<span style="font-size:11px;color:var(--text3)">—</span>';
-  window._awImgCache=window._awImgCache||[];
-  var ci=window._awImgCache.length; window._awImgCache.push(imgs);
-  var out='<div style="position:relative;display:inline-block;cursor:pointer" onclick="awOpenImgViewer(window._awImgCache['+ci+'])" title="이미지 '+imgs.length+'장">';
-  out+='<img src="'+imgs[0].url+'" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border)">';
-  if(imgs.length>1)out+='<span style="position:absolute;top:-4px;right:-4px;background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+imgs.length+'</span>';
-  out+='</div>';
-  return out;
+  if(!imgs.length)return'<span style="font-size:11px;color:var(--text3)">—</span>';
+  if(!window._awUS)window._awUS=[];
+  var ci=window._awUS.length; window._awUS.push({type:'imgs',data:imgs});
+  return'<div style="position:relative;display:inline-block;cursor:pointer" onclick="var x=window._awUS['+ci+'];awOpenImgViewer(x?x.data:[])" title="이미지 '+imgs.length+'장">'+
+    '<img src="'+imgs[0].url+'" style="width:32px;height:32px;object-fit:cover;border-radius:4px;border:1px solid var(--border)">'+
+    (imgs.length>1?'<span style="position:absolute;top:-4px;right:-4px;background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+imgs.length+'</span>':'')+
+  '</div>';
 }
-
 function awDisplayLinkCell(data){
-  if(!data)return '<span style="font-size:11px;color:var(--text3)">—</span>';
+  if(!data)return'<span style="font-size:11px;color:var(--text3)">—</span>';
   if(data.type==='drive'&&data.driveURL)data={images:[],links:[{url:data.driveURL,name:data.fname||''}]};
   else if(data.type==='image')data={images:[],links:[]};
   var lnks=data.links||[];
-  if(!lnks.length)return '<span style="font-size:11px;color:var(--text3)">—</span>';
-  window._awLnkCache=window._awLnkCache||[];
-  var li=window._awLnkCache.length; window._awLnkCache.push(lnks);
-  var icon=lnks[0].name&&lnks[0].name.match(/\.pdf$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.xlsx?$/i)?'ti-file-type-xls':'ti-file';
+  if(!lnks.length)return'<span style="font-size:11px;color:var(--text3)">—</span>';
+  if(!window._awUS)window._awUS=[];
+  var li=window._awUS.length; window._awUS.push({type:'lnks',data:lnks});
+  var icon0=lnks[0].name&&lnks[0].name.match(/\.pdf$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.xlsx?$/i)?'ti-file-type-xls':'ti-file';
   if(lnks.length===1){
-    return '<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awLinkOpen('+li+',0)" title="'+(lnks[0].name||'파일')+'"><i class="ti '+icon+'" style="font-size:15px"></i></button>';
+    return'<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrl('+li+')" title="'+(lnks[0].name||'파일')+'"><i class="ti '+icon0+'" style="font-size:15px"></i></button>';
   }
-  var out='<div style="position:relative;display:inline-block">';
-  out+='<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenLinkPicker(window._awLnkCache['+li+'])" title="파일 '+lnks.length+'개"><i class="ti '+icon+'" style="font-size:15px"></i></button>';
-  out+='<span style="position:absolute;top:-4px;right:-4px;background:var(--acc);color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+lnks.length+'</span>';
-  out+='</div>';
-  return out;
+  return'<div style="position:relative;display:inline-block">'+
+    '<button class="btn btn-xs" style="color:#1a73e8;border-color:#1a73e8;background:#e8f0fe;width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrls('+li+')"><i class="ti ti-brand-google-drive" style="font-size:15px"></i></button>'+
+    '<span style="position:absolute;top:-4px;right:-4px;background:#1a73e8;color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+lnks.length+'</span>'+
+  '</div>';
 }
-
 function awOpenImgViewer(imgs){
   if(!imgs||!imgs.length)return;
   if(imgs.length===1){window.open(imgs[0].url,'_blank');return;}
@@ -1557,12 +1575,12 @@ function render(){
   renderTodo();updateMissing();renderPinBar();renderConsult();renderGongjung();renderPlan();renderSL();renderEst();renderContract();renderVP();renderProfit();renderPay();renderOrder();renderVendors();renderCust();renderProp();renderCal();renderDocs();renderRB();
 }
 function renderConsult(){const tb=document.getElementById('consult-tb');if(!tb)return;const yv=(document.getElementById('consult-year')||{}).value||'';const mv=(document.getElementById('consult-month')||{}).value||'';tb.innerHTML=consultList.filter(c=>{if(yv&&!c.dt.startsWith(yv))return false;if(mv&&!c.dt.slice(0,7).endsWith(mv)&&!c.dt.slice(0,7).endsWith('.'+mv))return false;return true;}).map((c,i)=>{const ri=consultList.indexOf(c);const cls=c.status==='완료'?'row-done':'';const cd=c.consultDate||'';const cdParts=cd.split(' ');const cdDate=cdParts[0]||'—';const cdTime=cdParts[1]||'';return`<tr data-status="${c.status}" class="${cls}"><td style="font-size:10px;color:var(--text3)">${c.dt}</td><td>${lnk(c.name)}</td><td style="color:var(--text2);font-size:11px">${c.addr||'—'}</td><td style="color:var(--blue-t);font-size:11px;white-space:nowrap">${cdDate}</td><td style="color:var(--blue-t);font-size:11px;white-space:nowrap">${cdTime}</td><td>${c.phone}</td><td>${bd(c.type)}</td><td>${c.mgr}</td><td style="cursor:pointer" onclick="openEditConsult(${ri})" title="클릭하여 요청사항 보기/수정"><div style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text2);font-size:11px">${c.memo?c.memo:'<span style=\"color:var(--text3)\">클릭하여 입력</span>'}</div></td><td><select class="inline-sel" onchange="changeConsultSt(${ri},this.value)"><option value="예정"${c.status==='예정'?' selected':''}>예정</option><option value="완료"${c.status==='완료'?' selected':''}>완료</option></select></td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditConsultRow(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delConsult(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
-function renderGongjung(){window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('gongjung-tb');if(!tb)return;const yv=(document.getElementById('gj-year')||{}).value||'';const mv=(document.getElementById('gj-month')||{}).value||'';const GJ_ST=['진행중','완료'];const gjSrcF=(document.getElementById('gj-src-filter')||{}).value||'';tb.innerHTML=siteList.filter(s=>{if(gjSrcF&&s.src!==gjSrcF)return false;if(yv&&!(s.regDate||'').startsWith(yv))return !yv;if(mv){const rm=String(parseInt(mv)).padStart(2,'0');const rd=s.regDate||'';const rm2=rd.slice(5,7)||rd.split('.')[1]||'';if(rm2!==rm&&rm2!==String(parseInt(mv)))return false;}return true;}).map((s,i)=>{const ri=siteList.indexOf(s);const cls=s.status==='완료'?'row-closed':'';return`<tr data-status="${s.status}" data-src="${s.src||''}" class="${cls}"><td>${s.mgr}</td><td style="color:var(--text3);font-size:11px">${s.regDate||'—'}</td><td style="font-weight:600">${lnk(s.name)}</td><td>${s.phone}</td><td style="color:var(--text2)">${s.addr}</td><td>${s.src?bd(s.src):'—'}</td><td>${s.start||'—'}</td><td>${s.end||'—'}</td><td><select class="inline-sel" onchange="changeGjSt(${ri},this.value)">${GJ_ST.map(st=>`<option value="${st}"${st===s.status?' selected':''}>${st}</option>`).join('')}</select></td><td>${awDisplayImgCell(s.attachData)}</td><td>${awDisplayLinkCell(s.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditGj(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delGj(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderGongjung(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('gongjung-tb');if(!tb)return;const yv=(document.getElementById('gj-year')||{}).value||'';const mv=(document.getElementById('gj-month')||{}).value||'';const GJ_ST=['진행중','완료'];const gjSrcF=(document.getElementById('gj-src-filter')||{}).value||'';tb.innerHTML=siteList.filter(s=>{if(gjSrcF&&s.src!==gjSrcF)return false;if(yv&&!(s.regDate||'').startsWith(yv))return !yv;if(mv){const rm=String(parseInt(mv)).padStart(2,'0');const rd=s.regDate||'';const rm2=rd.slice(5,7)||rd.split('.')[1]||'';if(rm2!==rm&&rm2!==String(parseInt(mv)))return false;}return true;}).map((s,i)=>{const ri=siteList.indexOf(s);const cls=s.status==='완료'?'row-closed':'';return`<tr data-status="${s.status}" data-src="${s.src||''}" class="${cls}"><td>${s.mgr}</td><td style="color:var(--text3);font-size:11px">${s.regDate||'—'}</td><td style="font-weight:600">${lnk(s.name)}</td><td>${s.phone}</td><td style="color:var(--text2)">${s.addr}</td><td>${s.src?bd(s.src):'—'}</td><td>${s.start||'—'}</td><td>${s.end||'—'}</td><td><select class="inline-sel" onchange="changeGjSt(${ri},this.value)">${GJ_ST.map(st=>`<option value="${st}"${st===s.status?' selected':''}>${st}</option>`).join('')}</select></td><td>${awDisplayImgCell(s.attachData)}</td><td>${awDisplayLinkCell(s.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditGj(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delGj(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function renderPlan(){const spt=document.getElementById('siteplan-tb');if(!spt)return;const PLAN_TYPES=['자재발주','현장방문','기타'];spt.innerHTML=siteplans.map((s,i)=>{if(s.done)return'';const u=urgency(s.date);const dl=getDL(s.date);return`<tr data-urgency="${u}"><td style="font-weight:600">${s.site}</td><td><select class="inline-sel" onchange="siteplans[${i}].type=this.value;renderCal()">${PLAN_TYPES.map(t=>`<option value="${t}"${t===s.type?' selected':''}>${t}</option>`).join('')}</select></td><td>${s.date}<br><span style="font-size:10px;color:${u==='긴급'?'var(--red)':'var(--text3)'};font-weight:${u==='긴급'?700:400}">D-${Math.max(0,dl)}</span></td><td>${s.mgr}</td><td style="color:var(--text2)">${s.content}</td><td>${bd(u)}</td><td><button class="btn btn-xs" onclick="togglePlanDone(${i})">완료 처리</button></td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditPlan(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delPlan(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function renderSL(){const sl=document.getElementById('sitelog-tb');if(!sl)return;sl.innerHTML=siteLogs.map((s,i)=>`<tr data-process="${s.process}"><td>${s.date}</td><td>${lnk(s.site)}</td><td>${s.mgr}</td><td style="color:var(--text2)">${s.summary}</td><td>${bd(s.process)}</td><td>${s.photos.length?`<button class="btn btn-xs" onclick="openPhotoModal(${i})"><i class="ti ti-photo"></i> ${s.photos.length}장</button>`:'<span style="font-size:11px;color:var(--text3)">없음</span>'}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditSL(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delSL(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
-function renderEst(){window._awImgCache=[];window._awLnkCache=[];const et=document.getElementById('est-tb');if(!et)return;const yv=(document.getElementById('est-year')||{}).value||'';const mv=(document.getElementById('est-month')||{}).value||'';const estFilter=document.querySelector('#page-est-list .ftab .fb.on');const curEstF=estFilter?estFilter.getAttribute('onclick'):'';const showTerminated=curEstF.includes('상담종료');const estSrcF=(document.getElementById('est-src-filter')||{}).value||'';et.innerHTML=estimates.filter(e=>{if(yv&&!e.date.startsWith(yv))return false;if(mv&&e.date.slice(5,7)!==mv)return false;if(!showTerminated&&e.status==='상담종료')return false;if(estSrcF&&e.src!==estSrcF)return false;return true;}).map((e,i)=>{const ri=estimates.indexOf(e);const cls=e.status==='상담종료'?'row-closed':e.status==='계약완료'?'row-done':'';const srcBadge=e.src?` ${bd(e.src)}`:'';return`<tr data-status="${e.status}" class="${cls}"><td style="color:var(--text3);font-size:11px">${e.date}</td><td>${e.mgr}</td><td>${lnk(e.cust)}</td><td style="font-size:11px;color:var(--text2)">${e.phone||'—'}</td><td style="font-size:11px;color:var(--text2)">${e.addr||'—'}</td><td>${e.amt.toLocaleString()}원</td><td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td><td>${srcBadge}</td><td>${e.status==='상담종료'?`<div style="display:flex;align-items:center;gap:4px"><select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select><button class="btn btn-xs" style="color:var(--blue-t);border-color:var(--blue-lt);font-size:10px" onclick="changeEstSt(${ri},'대면상담')">↩ 되돌리기</button></div>`:`<select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select>`}</td><td>${awDisplayImgCell(e.attachData)}</td><td>${awDisplayLinkCell(e.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditEst(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delEst(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
-function renderContract(){window._awImgCache=[];window._awLnkCache=[];const ct=document.getElementById('contract-tb');if(!ct)return;const yv=(document.getElementById('contract-year')||{}).value||'';const mv=(document.getElementById('contract-month')||{}).value||'';ct.innerHTML=contracts.filter(c=>{if(yv&&!c.date.startsWith(yv))return false;if(mv&&c.date.slice(5,7)!==mv)return false;return true;}).map((c,i)=>{const ri=contracts.indexOf(c);const cls=c.status==='공사완료'?'row-closed':'';return`<tr data-status="${c.status}" class="${cls}"><td>${c.mgr}</td><td>${lnk(c.cust)}</td><td>${c.phone}</td><td>${c.addr}</td><td>${c.amt.toLocaleString()}원</td><td>${bd(c.vat)}</td><td>${c.date}</td><td><select class="inline-sel" onchange="changeContractSt(${ri},this.value)">${CONTRACT_ST.map(s=>`<option value="${s}"${s===c.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${awDisplayImgCell(c.attachData)}</td><td>${awDisplayLinkCell(c.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditContract(${ri})" title="수정/파일"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delContract(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
-function renderVP(){window._awImgCache=[];window._awLnkCache=[];const vp=document.getElementById('vp-tb');if(!vp)return;vp.innerHTML=vpList.map((v,i)=>`<tr data-type="${v.type}"><td>${bd(v.type)}</td><td style="font-weight:600">${v.name}</td><td>${v.mgr}</td><td>${v.phone}</td><td style="color:var(--text2)">${v.item}</td><td style="color:var(--text3)">${v.memo||'—'}</td><td>${awDisplayImgCell(v.attachData)}</td><td>${awDisplayLinkCell(v.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditVp(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delVp(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
+function renderEst(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const et=document.getElementById('est-tb');if(!et)return;const yv=(document.getElementById('est-year')||{}).value||'';const mv=(document.getElementById('est-month')||{}).value||'';const estFilter=document.querySelector('#page-est-list .ftab .fb.on');const curEstF=estFilter?estFilter.getAttribute('onclick'):'';const showTerminated=curEstF.includes('상담종료');const estSrcF=(document.getElementById('est-src-filter')||{}).value||'';et.innerHTML=estimates.filter(e=>{if(yv&&!e.date.startsWith(yv))return false;if(mv&&e.date.slice(5,7)!==mv)return false;if(!showTerminated&&e.status==='상담종료')return false;if(estSrcF&&e.src!==estSrcF)return false;return true;}).map((e,i)=>{const ri=estimates.indexOf(e);const cls=e.status==='상담종료'?'row-closed':e.status==='계약완료'?'row-done':'';const srcBadge=e.src?` ${bd(e.src)}`:'';return`<tr data-status="${e.status}" class="${cls}"><td style="color:var(--text3);font-size:11px">${e.date}</td><td>${e.mgr}</td><td>${lnk(e.cust)}</td><td style="font-size:11px;color:var(--text2)">${e.phone||'—'}</td><td style="font-size:11px;color:var(--text2)">${e.addr||'—'}</td><td>${e.amt.toLocaleString()}원</td><td style="color:var(--text2);font-size:11px">${e.memo||'—'}</td><td>${srcBadge}</td><td>${e.status==='상담종료'?`<div style="display:flex;align-items:center;gap:4px"><select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select><button class="btn btn-xs" style="color:var(--blue-t);border-color:var(--blue-lt);font-size:10px" onclick="changeEstSt(${ri},'대면상담')">↩ 되돌리기</button></div>`:`<select class="inline-sel" onchange="changeEstSt(${ri},this.value)">${EST_ST.map(s=>`<option value="${s}"${s===e.status?' selected':''}>${s}</option>`).join('')}</select>`}</td><td>${awDisplayImgCell(e.attachData)}</td><td>${awDisplayLinkCell(e.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditEst(${ri})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delEst(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderContract(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const ct=document.getElementById('contract-tb');if(!ct)return;const yv=(document.getElementById('contract-year')||{}).value||'';const mv=(document.getElementById('contract-month')||{}).value||'';ct.innerHTML=contracts.filter(c=>{if(yv&&!c.date.startsWith(yv))return false;if(mv&&c.date.slice(5,7)!==mv)return false;return true;}).map((c,i)=>{const ri=contracts.indexOf(c);const cls=c.status==='공사완료'?'row-closed':'';return`<tr data-status="${c.status}" class="${cls}"><td>${c.mgr}</td><td>${lnk(c.cust)}</td><td>${c.phone}</td><td>${c.addr}</td><td>${c.amt.toLocaleString()}원</td><td>${bd(c.vat)}</td><td>${c.date}</td><td><select class="inline-sel" onchange="changeContractSt(${ri},this.value)">${CONTRACT_ST.map(s=>`<option value="${s}"${s===c.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${awDisplayImgCell(c.attachData)}</td><td>${awDisplayLinkCell(c.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditContract(${ri})" title="수정/파일"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delContract(${ri})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderVP(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const vp=document.getElementById('vp-tb');if(!vp)return;vp.innerHTML=vpList.map((v,i)=>`<tr data-type="${v.type}"><td>${bd(v.type)}</td><td style="font-weight:600">${v.name}</td><td>${v.mgr}</td><td>${v.phone}</td><td style="color:var(--text2)">${v.item}</td><td style="color:var(--text3)">${v.memo||'—'}</td><td>${awDisplayImgCell(v.attachData)}</td><td>${awDisplayLinkCell(v.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditVp(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delVp(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
 function renderProfit(){const pt=document.getElementById('profit-tb');if(!pt)return;const yr=document.getElementById('profit-year');const mo=document.getElementById('profit-month');const yv=yr?yr.value:'';const mv=mo?mo.value:'';
 // init year options
 if(yr&&yr.options.length<2){const years=[...new Set(profits.map(p=>{const d=p.costs[0]&&p.costs[0].date?p.costs[0].date.slice(0,4):'2026';return d;}))];years.sort((a,b)=>b-a);years.forEach(y=>{const o=document.createElement('option');o.value=y;o.textContent=y+'년';yr.appendChild(o);});}
@@ -1589,7 +1607,7 @@ function renderCust(){
     return`<tr><td>${s.mgr}</td><td style="font-weight:600">${lnk(s.name)}</td><td>${s.phone}</td><td style="color:var(--text2)">${s.addr}</td><td>${s.src?bd(s.src):'—'}</td><td>${c?c.amt.toLocaleString()+'원':'—'}</td><td>${s.completedDate||s.end||'—'}</td></tr>`;
   }).join('');}
 
-function renderPay(){window._awImgCache=[];window._awLnkCache=[];
+function renderPay(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];
   const q=(document.getElementById('pay-search')||{}).value||'';
   const vatF=(document.getElementById('pay-filter-vat')||{}).value||'';
   const custF=(document.getElementById('pay-filter-cust')||{}).value||'';
@@ -1622,7 +1640,7 @@ function renderPay(){window._awImgCache=[];window._awLnkCache=[];
   const sumEl=document.getElementById('pay-summary');
   if(sumEl){const inSum=filtered.filter(p=>p.type==='입금').reduce((a,p)=>a+p.amt,0);const outSum=filtered.filter(p=>p.type==='출금').reduce((a,p)=>a+p.amt,0);const vatSum=filtered.filter(p=>(p.vat||'미발행')==='발행').reduce((a,p)=>a+p.amt,0);sumEl.innerHTML=`<div style="padding:8px 18px;font-size:11px;border-right:1px solid var(--border);flex:1"><span style="color:var(--text3)">입금 합산</span> <b style="color:var(--acc)">${inSum.toLocaleString()}원</b></div><div style="padding:8px 18px;font-size:11px;border-right:1px solid var(--border);flex:1"><span style="color:var(--text3)">출금 합산</span> <b style="color:var(--red)">${outSum.toLocaleString()}원</b></div><div style="padding:8px 18px;font-size:11px;flex:1"><span style="color:var(--text3)">부가세 발행 합산</span> <b style="color:var(--blue-t)">${vatSum.toLocaleString()}원</b></div>`;}
   ot.innerHTML=filtered.map((p,i)=>{const ri=payments.indexOf(p);const cls=(p.status||'완료')==='완료'?'row-closed':'';return`<tr class="${cls}"><td>${p.date}</td><td style="font-weight:600">${p.target}</td><td style="color:var(--text2)">${p.phone||'—'}</td><td>${p.mgr||'—'}</td><td>${bd(p.type)}</td><td style="font-weight:600;color:${p.type==='입금'?'var(--acc)':'var(--red)'}">${p.amt.toLocaleString()}원</td><td>${p.method}</td><td style="color:var(--text2)">${p.memo}</td><td><select class="inline-sel" onchange="payments[${ri}].vat=this.value;renderPay()">${VAT_ST.map(s=>`<option value="${s}"${s===(p.vat||'미발행')?' selected':''}>${s}</option>`).join('')}</select></td><td><select class="inline-sel" onchange="payments[${ri}].status=this.value;renderPay()">${PAY_ST.map(s=>`<option value="${s}"${s===(p.status||'완료')?' selected':''}>${s}</option>`).join('')}</select></td><td>${awDisplayImgCell(p.attachData)}</td><td>${awDisplayLinkCell(p.attachData)}</td><td><button class="icon-btn" onclick="openEditPay(${ri})" title="수정"><i class="ti ti-edit"></i></button></td></tr>`;}).join('');}
-function renderOrder(){window._awImgCache=[];window._awLnkCache=[];const ot=document.getElementById('order-tb');if(!ot)return;ot.innerHTML=orders.map((o,i)=>{const cls=o.status==='납품완료'?'row-done':'';return`<tr data-status="${o.status}" class="${cls}"><td style="font-weight:600">${o.vendor}</td><td>${o.site}</td><td>${lnk(o.cust)}</td><td>${o.mgr}</td><td>${o.amt.toLocaleString()}원</td><td>${o.date}</td><td><select class="inline-sel" onchange="changeOrderSt(${i},this.value)">${ORDER_ST.map(s=>`<option value="${s}"${s===o.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${awDisplayImgCell(o.attachData)}</td><td>${awDisplayLinkCell(o.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditOrder(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delOrder(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderOrder(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const ot=document.getElementById('order-tb');if(!ot)return;ot.innerHTML=orders.map((o,i)=>{const cls=o.status==='납품완료'?'row-done':'';return`<tr data-status="${o.status}" class="${cls}"><td style="font-weight:600">${o.vendor}</td><td>${o.site}</td><td>${lnk(o.cust)}</td><td>${o.mgr}</td><td>${o.amt.toLocaleString()}원</td><td>${o.date}</td><td><select class="inline-sel" onchange="changeOrderSt(${i},this.value)">${ORDER_ST.map(s=>`<option value="${s}"${s===o.status?' selected':''}>${s}</option>`).join('')}</select></td><td>${awDisplayImgCell(o.attachData)}</td><td>${awDisplayLinkCell(o.attachData)}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditOrder(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delOrder(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function renderVendors(){const vt=document.getElementById('vendor-tb');if(!vt)return;vt.innerHTML=vendors.map((v,i)=>`<tr><td style="font-weight:600">${v.name}</td><td>${v.field||'—'}</td><td>${v.mgr||'—'}</td><td>${v.phone||'—'}</td><td style="color:var(--text2)">${v.sites||'—'}</td><td style="color:var(--text3);font-size:11px">${v.memo||'—'}</td><td style="white-space:nowrap"><button class="icon-btn" onclick="openEditVendor(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delVendor(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`).join('');}
 function saveVendor(){const n=document.getElementById('vd-name').value.trim();if(!n){alert('거래처명은 필수입니다.');return;}vendors.unshift({name:n,field:document.getElementById('vd-field').value||'—',mgr:document.getElementById('vd-mgr').value||'—',phone:document.getElementById('vd-phone').value||'—',sites:'',price:'보통',memo:document.getElementById('vd-memo').value||''});renderVendors();triggerSave();['vd-name','vd-field','vd-mgr','vd-phone','vd-memo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});closeM('modal-add-vendor');}
 function renderCustOld_DISABLED(){}
@@ -1867,7 +1885,7 @@ let customerDB=[];
 function saveCustomerReg(){const n=document.getElementById('cr-name').value.trim();const p=document.getElementById('cr-phone').value.trim();if(!n||!p){alert('이름과 연락처는 필수입니다.');return;}// check exact dup (same name + same phone)
 if(customerDB.find(c=>c.name===n&&c.phone===p)){alert('동일한 이름과 연락처로 이미 등록된 고객입니다.');return;}const awCrPlan=awGetData('cr-plan');customerDB.push({name:n,phone:p,addr:document.getElementById('cr-addr').value||'',memo:document.getElementById('cr-memo').value||'',src:document.getElementById('cr-src').value||'',plan:!!awCrPlan,attachData:awCrPlan});renderCustRegList();clearCustReg();triggerSave();const msg=document.getElementById('cr-success');if(msg){msg.textContent=`✔ ${n} 고객이 등록되었습니다.`;msg.style.display='block';setTimeout(()=>msg.style.display='none',3000);}setupAllAutocomplete();}
 function clearCustReg(){['cr-name','cr-phone','cr-addr','cr-memo'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});const srcEl=document.getElementById('cr-src');if(srcEl)srcEl.value='';document.getElementById('cr-dup-warn').style.display='none';awReset('cr-plan');}
-function renderCustRegList(){window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('cr-list-tb');if(!tb)return;const cnt=document.getElementById('cr-count');if(cnt)cnt.textContent='총 '+customerDB.length+'명';tb.innerHTML=customerDB.map((c,i)=>{const planImgBtn=awDisplayImgCell(c.attachData);const planLinkBtn=awDisplayLinkCell(c.attachData);return`<tr><td style="font-weight:600;white-space:nowrap;min-width:75px">${c.name}</td><td style="white-space:nowrap">${c.phone}</td><td style="color:var(--text2);min-width:200px">${c.addr||'—'}</td><td>${planImgBtn}</td><td>${planLinkBtn}</td><td>${c.src?`<span class="bd bd-purple" style="font-size:10px">${c.src}</span>`:'—'}</td><td style="color:var(--text3)">${c.memo||'—'}</td><td style="white-space:nowrap;vertical-align:middle"><button class="icon-btn" onclick="openEditCust(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delCustReg(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderCustRegList(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('cr-list-tb');if(!tb)return;const cnt=document.getElementById('cr-count');if(cnt)cnt.textContent='총 '+customerDB.length+'명';tb.innerHTML=customerDB.map((c,i)=>{const planImgBtn=awDisplayImgCell(c.attachData);const planLinkBtn=awDisplayLinkCell(c.attachData);return`<tr><td style="font-weight:600;white-space:nowrap;min-width:75px">${c.name}</td><td style="white-space:nowrap">${c.phone}</td><td style="color:var(--text2);min-width:200px">${c.addr||'—'}</td><td>${planImgBtn}</td><td>${planLinkBtn}</td><td>${c.src?`<span class="bd bd-purple" style="font-size:10px">${c.src}</span>`:'—'}</td><td style="color:var(--text3)">${c.memo||'—'}</td><td style="white-space:nowrap;vertical-align:middle"><button class="icon-btn" onclick="openEditCust(${i})" title="수정"><i class="ti ti-edit"></i></button><button class="icon-btn" onclick="delCustReg(${i})" title="삭제"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function delCustReg(i){if(!confirm('삭제하시겠습니까?'))return;customerDB.splice(i,1);renderCustRegList();triggerSave();setupAllAutocomplete();}
 function openEditCust(i){const c=customerDB[i];if(!c)return;document.getElementById('ecu-idx').value=i;document.getElementById('ecu-name').value=c.name||'';document.getElementById('ecu-phone').value=c.phone||'';document.getElementById('ecu-addr').value=c.addr||'';document.getElementById('ecu-src').value=c.src||'';document.getElementById('ecu-memo').value=c.memo||'';openM('modal-edit-cust');setTimeout(()=>{awReset('ecu-plan');const wrap=document.getElementById('ecu-plan-attach-wrap');if(wrap){wrap.innerHTML=makeAttachWidget('ecu-plan');initAttachWidget('ecu-plan');if(c.attachData)awRestore('ecu-plan',c.attachData);}},100);}
 function saveEditCust(){const i=Number(document.getElementById('ecu-idx').value);if(i<0||!customerDB[i])return;const c=customerDB[i];c.name=document.getElementById('ecu-name').value.trim()||c.name;c.phone=document.getElementById('ecu-phone').value.trim()||c.phone;c.addr=document.getElementById('ecu-addr').value;c.src=document.getElementById('ecu-src').value;c.memo=document.getElementById('ecu-memo').value;const awEcu=awGetData('ecu-plan');if(awEcu){c.plan=true;c.attachData=awEcu;}renderCustRegList();triggerSave();setupAllAutocomplete();closeM('modal-edit-cust');}
@@ -1884,7 +1902,7 @@ inp._acHandler=function(){const v=inp.value.trim();acBox.innerHTML='';if(!v||cus
 let docList=[];
 function saveDoc(){const t=document.getElementById('doc-title').value.trim();if(!t){alert('제목을 입력하세요.');return;}const awDoc=awGetData('doc');docList.unshift({title:t,desc:document.getElementById('doc-desc').value||'',date:new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'}),file:!!awDoc,attachData:awDoc});renderDocs();triggerSave();clearDocForm();}
 function clearDocForm(){['doc-title','doc-desc'].forEach(id=>{const el=document.getElementById(id);if(el)el.value='';});document.getElementById('doc-chip').style.display='none';document.getElementById('doc-chip').innerHTML='';document.getElementById('doc-dz').style.display='block';}
-function renderDocs(){window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('doc-tb');if(!tb)return;const cnt=document.getElementById('doc-count');if(cnt)cnt.textContent='총 '+docList.length+'개';tb.innerHTML=docList.map((d,i)=>{const fileImgCell=awDisplayImgCell(d.attachData);const fileLinkCell=d.file?`<div style="display:flex;gap:4px;align-items:center">${awDisplayLinkCell(d.attachData)}<button class="btn btn-xs" style="color:var(--text2);padding:2px 5px" onclick="openEditDocAttach(${i})" title="파일 교체"><i class="ti ti-refresh"></i></button></div>`:`<button class="rcp-btn" onclick="openEditDocAttach(${i})"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td style="font-weight:600">${d.title}</td><td style="color:var(--text2)">${d.desc||'—'}</td><td style="color:var(--text3);font-size:11px">${d.date}</td><td>${fileImgCell}</td><td>${fileLinkCell}</td><td><button class="icon-btn" onclick="delDoc(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
+function renderDocs(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];const tb=document.getElementById('doc-tb');if(!tb)return;const cnt=document.getElementById('doc-count');if(cnt)cnt.textContent='총 '+docList.length+'개';tb.innerHTML=docList.map((d,i)=>{const fileImgCell=awDisplayImgCell(d.attachData);const fileLinkCell=d.file?`<div style="display:flex;gap:4px;align-items:center">${awDisplayLinkCell(d.attachData)}<button class="btn btn-xs" style="color:var(--text2);padding:2px 5px" onclick="openEditDocAttach(${i})" title="파일 교체"><i class="ti ti-refresh"></i></button></div>`:`<button class="rcp-btn" onclick="openEditDocAttach(${i})"><i class="ti ti-paperclip"></i> 첨부</button>`;return`<tr><td style="font-weight:600">${d.title}</td><td style="color:var(--text2)">${d.desc||'—'}</td><td style="color:var(--text3);font-size:11px">${d.date}</td><td>${fileImgCell}</td><td>${fileLinkCell}</td><td><button class="icon-btn" onclick="delDoc(${i})"><i class="ti ti-trash" style="color:var(--red)"></i></button></td></tr>`;}).join('');}
 function attachDoc(i){attachDocCloud(i);}
 function downloadDoc(i){const d=docList[i];const url=d&&d.fileURL;if(d&&url){window.open(url,'_blank');}else{document.getElementById('file-name').textContent=d?d.fname||d.title:'파일';openM('modal-file');}}
 function delDoc(i){if(!confirm('삭제하시겠습니까?'))return;docList.splice(i,1);renderDocs();}
@@ -2067,17 +2085,17 @@ function awDisplayLinkCell(data){
   if(!data)return'<span style="font-size:11px;color:var(--text3)">—</span>';
   if(data.type==='drive'&&data.driveURL)data={images:[],links:[{url:data.driveURL,name:data.fname||''}]};
   else if(data.type==='image')data={images:[],links:[]};
-  const lnks=data.links||[];
+  var lnks=data.links||[];
   if(!lnks.length)return'<span style="font-size:11px;color:var(--text3)">—</span>';
   if(lnks.length===1){
-    const icon0=lnks[0].name&&lnks[0].name.match(/\.(pdf)$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.(xlsx?|xls)$/i)?'ti-file-type-xls':'ti-file';
-    return`<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="window.open('${lnks[0].url}','_blank')" title="${lnks[0].name||'파일'}"><i class="ti ${icon0}" style="font-size:15px"></i></button>`;
+    var icon0=lnks[0].name&&lnks[0].name.match(/\.pdf$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.xlsx?$/i)?'ti-file-type-xls':'ti-file';
+    return'<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="(function(){var x=window._awUS['+li+'];if(x&&x.data[0])window.open(x.data[0].url,String.fromCharCode(95)+'+'String.fromCharCode(98,108,97,110,107));})()" title="'+(lnks[0].name||'파일')+'><i class="ti '+icon0+'" style="font-size:15px"></i></button>';
   }
-  const lnksJson=JSON.stringify(lnks).replace(/"/g,'&quot;');
-  return`<div style="position:relative;display:inline-block">
-    <button class="btn btn-xs" style="color:#1a73e8;border-color:#1a73e8;background:#e8f0fe;width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenLinkPicker(${lnksJson})"><i class="ti ti-brand-google-drive" style="font-size:15px"></i></button>
-    <span style="position:absolute;top:-4px;right:-4px;background:#1a73e8;color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">${lnks.length}</span>
-  </div>`;
+  var allL=JSON.stringify(lnks).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
+  return'<div style="position:relative;display:inline-block">'+
+    '<button class="btn btn-xs" style="color:#1a73e8;border-color:#1a73e8;background:#e8f0fe;width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenLinkPicker('+allL+')"><i class="ti ti-brand-google-drive" style="font-size:15px"></i></button>'+
+    '<span style="position:absolute;top:-4px;right:-4px;background:#1a73e8;color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+lnks.length+'</span>'+
+  '</div>';
 }
 
 
@@ -2166,7 +2184,7 @@ function applyFixedExpenses(){
     }
   });
 }
-function renderOE(){window._awImgCache=[];window._awLnkCache=[];
+function renderOE(){window._awUS=[];window._awImgCache=[];window._awLnkCache=[];
   applyFixedExpenses();
   const tb=document.getElementById('oe-tb');
   const empty=document.getElementById('oe-empty');
@@ -2492,7 +2510,7 @@ function confirmSMS(){
 }
 
 // ===== 영수증 보관함 =====
-function renderRB(){
+function renderRB(){window._awUS=[];
   window._awImgCache=[];window._awLnkCache=[];
   const list=document.getElementById('rb-list');
   const empty=document.getElementById('rb-empty');
