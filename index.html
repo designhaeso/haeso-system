@@ -2087,13 +2087,14 @@ function awDisplayLinkCell(data){
   else if(data.type==='image')data={images:[],links:[]};
   var lnks=data.links||[];
   if(!lnks.length)return'<span style="font-size:11px;color:var(--text3)">—</span>';
+  if(!window._awUS)window._awUS=[];
+  var li=window._awUS.length; window._awUS.push({type:'lnks',data:lnks});
+  var icon0=lnks[0].name&&lnks[0].name.match(/\.pdf$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.xlsx?$/i)?'ti-file-type-xls':'ti-file';
   if(lnks.length===1){
-    var icon0=lnks[0].name&&lnks[0].name.match(/\.pdf$/i)?'ti-file-type-pdf':lnks[0].name&&lnks[0].name.match(/\.xlsx?$/i)?'ti-file-type-xls':'ti-file';
-    return'<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="(function(){var x=window._awUS['+li+'];if(x&&x.data[0])window.open(x.data[0].url,String.fromCharCode(95)+'+'String.fromCharCode(98,108,97,110,107));})()" title="'+(lnks[0].name||'파일')+'><i class="ti '+icon0+'" style="font-size:15px"></i></button>';
+    return'<button class="btn btn-xs" style="color:var(--acc-t);border-color:var(--acc);background:var(--acc-lt);width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrl('+li+')" title="'+(lnks[0].name||'파일')+'"><i class="ti '+icon0+'" style="font-size:15px"></i></button>';
   }
-  var allL=JSON.stringify(lnks).replace(/\\/g,'\\\\').replace(/'/g,"\\'");
   return'<div style="position:relative;display:inline-block">'+
-    '<button class="btn btn-xs" style="color:#1a73e8;border-color:#1a73e8;background:#e8f0fe;width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenLinkPicker('+allL+')"><i class="ti ti-brand-google-drive" style="font-size:15px"></i></button>'+
+    '<button class="btn btn-xs" style="color:#1a73e8;border-color:#1a73e8;background:#e8f0fe;width:32px;height:32px;padding:0;display:inline-flex;align-items:center;justify-content:center" onclick="awOpenUrls('+li+')"><i class="ti ti-brand-google-drive" style="font-size:15px"></i></button>'+
     '<span style="position:absolute;top:-4px;right:-4px;background:#1a73e8;color:#fff;border-radius:8px;font-size:9px;padding:1px 4px;font-weight:700">'+lnks.length+'</span>'+
   '</div>';
 }
