@@ -35,6 +35,16 @@
 
   // Firestore → 앱 데이터 적용
   function applyData(d) {
+    // 배열 길이만으로 비교하면 "삭제"는 항상 로컬을 더 짧게 만들어서,
+    // 아직 Firestore에 반영 안 된(디바운스 대기 중인) 삭제가 옛날 원격 데이터로
+    // 되살아나는 문제가 생긴다. 로컬에 원격 저장 시각보다 더 최근 변경이
+    // 있으면(아직 저장 중이면) 원격으로 덮어쓰지 않는다.
+    const lastLocalChange = Number(localStorage.getItem('haeso_lastLocalChange')) || 0;
+    const remoteSavedAt = d._savedAt || 0;
+    if (lastLocalChange > remoteSavedAt) {
+      console.warn('⚠️ applyData: 로컬에 아직 저장 안 된 최근 변경이 있음 — 원격 데이터 무시');
+      return;
+    }
     FS_KEYS.forEach(k => {
       if (d[k] !== undefined && Array.isArray(d[k])) {
         try {
@@ -100,6 +110,14 @@
       // 안전장치 2: 빈 데이터 무시
       const hasData = FS_KEYS.some(k => Array.isArray(d[k]) && d[k].length > 0);
       if (!hasData) { console.warn('⚠️ 빈 데이터 무시'); return; }
+
+      // 안전장치 2.5: 로컬에 아직 저장 안 된(디바운스 대기 중인) 최근 변경이 있으면
+      // (예: 방금 삭제) 이 원격 스냅샷은 그 변경이 반영되기 전 것일 수 있으니 무시
+      const lastLocalChange = Number(localStorage.getItem('haeso_lastLocalChange')) || 0;
+      if (lastLocalChange > (d._savedAt || 0)) {
+        console.warn('⚠️ 로컬에 아직 저장 안 된 최근 변경이 있음 — 동기화 무시');
+        return;
+      }
 
       // 안전장치 3: 키별로 로컬이 더 많으면 해당 키 덮어쓰지 않음
       const CORE_KEYS = ['consultList','siteList','estimates','contracts','vpList','profits','payments','orders','siteplans','vendors','docList','customerDB'];
@@ -1985,6 +2003,9 @@ function clearLS() {
 // 데이터 변경 감지 후 자동저장 (디바운스 500ms)
 let _lsSaveTimer = null;
 function triggerSave() {
+  // 변경 발생 시각을 즉시(디바운스 없이) 기록 — Firestore 저장이 아직 안 끝난 상태에서
+  // 새로고침해도, 저장 시각 비교로 옛 원격 데이터가 방금 한 변경(예: 삭제)을 덮어쓰지 않게 함
+  try { localStorage.setItem('haeso_lastLocalChange', String(Date.now())); } catch(e) {}
   clearTimeout(_lsSaveTimer);
   _lsSaveTimer = setTimeout(saveToLS, 500);
 }
