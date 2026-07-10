@@ -190,29 +190,8 @@ const CLD_PRESET = 'haeso-upload';
 
 // 파일을 Cloudinary에 업로드하고 공개 URL 반환
 async function uploadToCloud(file) {
-  const isPDF = file.type === 'application/pdf' || file.name.match(/\.pdf$/i);
-
-  if (isPDF) {
-    // PDF → ImgBB (32MB 제한, 무료, public URL)
-    const IMGBB_KEY = '4e9b99e33d16f3e92ed72a0e9c5e973c';
-    const fd = new FormData();
-    fd.append('image', file);
-    try {
-      const res = await fetch('https://api.imgbb.com/1/upload?key=' + IMGBB_KEY, {
-        method: 'POST', body: fd
-      });
-      const data = await res.json();
-      if (data.success) return data.data.url;
-      alert('ImgBB 업로드 실패: ' + (data.error ? data.error.message : JSON.stringify(data)));
-      return null;
-    } catch(e) {
-      console.error('ImgBB 오류:', e);
-      alert('업로드 오류: ' + e.message);
-      return null;
-    }
-  }
-
-  // 이미지 → Cloudinary image/upload
+  // 이미지 → Cloudinary image/upload, PDF/엑셀 등 → Cloudinary raw/upload
+  // (Cloudinary 계정 Security 설정에서 "Allow delivery of PDF and ZIP files" 활성화 필요)
   const isImg = file.type.startsWith('image/');
   const fd = new FormData();
   fd.append('file', file);
