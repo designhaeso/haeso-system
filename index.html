@@ -45,17 +45,16 @@
       console.warn('⚠️ applyData: 로컬에 아직 저장 안 된 최근 변경이 있음 — 원격 데이터 무시');
       return;
     }
+    // 위에서 "로컬에 저장 안 된 최근 변경 없음"을 이미 확인했으므로, 배열 길이와
+    // 무관하게 원격 데이터를 그대로 신뢰한다 (길이 비교는 삭제를 항상 "옛날 것"으로
+    // 오판하게 만들어 삭제가 되살아나는 원인이었음). 다만 원격 필드가 통째로 비어있는
+    // 경우(쓰기 오류 등)로부터 로컬 데이터를 보호하는 것만 유지한다.
     FS_KEYS.forEach(k => {
       if (d[k] !== undefined && Array.isArray(d[k])) {
         try {
           const local = (function(){ try{return eval(k)||[];}catch(e){return[];} })();
           const remoteLen = d[k].length;
           const localLen = local.length;
-          // 로컬이 더 많으면 절대 덮어쓰지 않음
-          if (localLen > remoteLen) {
-            console.warn('⚠️ applyData: '+k+' 로컬('+localLen+') > 원격('+remoteLen+') — 보존');
-            return;
-          }
           if (remoteLen > 0 || localLen === 0) {
             eval(k + ' = d[k]');
           }
@@ -119,28 +118,22 @@
         return;
       }
 
-      // 안전장치 3: 키별로 로컬이 더 많으면 해당 키 덮어쓰지 않음
-      const CORE_KEYS = ['consultList','siteList','estimates','contracts','vpList','profits','payments','orders','siteplans','vendors','docList','customerDB'];
-      const localTotal = CORE_KEYS.reduce((s,k)=>{try{return s+(eval(k)||[]).length;}catch(e){return s;}},0);
-      const remoteTotal = CORE_KEYS.reduce((s,k)=>s+(Array.isArray(d[k])?d[k].length:0),0);
+      // 안전장치 3: 위에서 "로컬에 저장 안 된 최근 변경 없음"을 이미 확인했으므로,
+      // 배열 길이와 무관하게 원격 데이터를 그대로 반영한다. (길이 비교로 "로컬이
+      // 더 많은 키는 보존"하던 예전 방식은, 다른 탭/기기가 오래 열려있다가 나중에
+      // 무관한 변경을 저장할 때 그 탭의 낡은 배열로 방금 삭제된 항목을 되살리는
+      // 원인이었다.) 원격 필드가 통째로 비어있는 경우(쓰기 오류 등)만 방어한다.
+      const localTotal = FS_KEYS.reduce((s,k)=>{try{return s+(eval(k)||[]).length;}catch(e){return s;}},0);
+      const remoteTotal = FS_KEYS.reduce((s,k)=>s+(Array.isArray(d[k])?d[k].length:0),0);
 
-      // 전체 로컬이 원격보다 많으면 완전 차단
-      if (localTotal > remoteTotal) {
-        console.warn('⚠️ 로컬 데이터가 더 많음 — 동기화 차단', {local:localTotal, remote:remoteTotal});
-        return;
-      }
-
-      // 키별 보호: 로컬이 더 많은 키는 덮어쓰지 않음
       FS_KEYS.forEach(k => {
         if (d[k] === undefined) return;
         if (!Array.isArray(d[k])) return;
         try {
           const localLen = (eval(k)||[]).length;
           const remoteLen = d[k].length;
-          if (remoteLen >= localLen) {
+          if (remoteLen > 0 || localLen === 0) {
             eval(k + ' = d[k]');
-          } else {
-            console.warn('⚠️ '+k+' 로컬('+localLen+') > 원격('+remoteLen+') — 보존');
           }
         } catch(e) {}
       });
