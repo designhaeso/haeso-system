@@ -197,7 +197,14 @@ async function uploadToCloud(file) {
   fd.append('file', file);
   fd.append('upload_preset', CLD_PRESET);
   fd.append('folder', 'haeso');
+  // 한글 등 비ASCII 파일명은 Cloudinary가 확장자를 인식하지 못해 raw 파일의 Content-Type이
+  // application/octet-stream으로 깨지는 문제 방지: 확장자를 뽑아 안전한 public_id를 직접 지정
+  // (image 타입은 Cloudinary가 실제 포맷을 자동 인식해 확장자를 별도로 붙이므로 여기선 제외)
+  const extMatch = file.name.match(/\.[a-zA-Z0-9]+$/);
+  const ext = extMatch ? extMatch[0] : '';
+  const safeId = Date.now() + '_' + Math.random().toString(36).slice(2, 8);
   const resType = isImg ? 'image' : 'raw';
+  fd.append('public_id', resType === 'raw' ? safeId + ext : safeId);
   try {
     const res = await fetch(
       'https://api.cloudinary.com/v1_1/' + CLD_CLOUD + '/' + resType + '/upload',
