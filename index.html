@@ -28,6 +28,10 @@
   window._fsSaving = false;       // 저장 진행 중 플래그
   window._fsSaveTimer = null;     // 디바운스 타이머
   window._fsLastSaveTime = 0;     // 마지막 저장 시각
+  // 초기 Firestore 로드가 끝나기 전에는 저장을 절대 허용하지 않는다.
+  // (로드가 끝나기 전에 어떤 이유로든 저장이 발생하면, 아직 비어있는 초기값이
+  // 그대로 클라우드에 덮어써져 기존 데이터가 통째로 사라질 수 있다 — 실제로 발생했던 사고)
+  window._fsInitialLoadDone = false;
 
   const FS_KEYS = ['consultList','siteList','siteLogs','estimates','contracts',
                    'vpList','profits','payments','orders','proposals',
@@ -78,11 +82,20 @@
     } catch(e) {
       console.warn('⚠️ Firestore 로드 실패 (오프라인?)', e);
       return false;
+    } finally {
+      // 성공하든 실패(오프라인 등)하든, 로드 시도가 일단 끝났으면 저장을 허용한다.
+      window._fsInitialLoadDone = true;
     }
   };
 
   // Firestore 저장 (디바운스 1초 — 연속 입력 시 마지막 것만 저장)
   window.fsSave = async function(dataObj) {
+    // 초기 로드가 아직 안 끝났으면 저장 자체를 막는다 — 로드 전 빈 초기값이
+    // 통째로 저장되어 기존 데이터를 지워버리는 사고를 원천 차단한다.
+    if (!window._fsInitialLoadDone) {
+      console.warn('⚠️ 초기 로드 완료 전 저장 시도 차단됨');
+      return;
+    }
     try {
       window._fsSaving = true;
       window._fsLastSaveTime = Date.now();
