@@ -37,6 +37,26 @@
                    'vpList','profits','payments','orders','proposals',
                    'siteplans','vendors','docList','customerDB','calEvents','officeExpenses','receiptBox'];
 
+  // 이 세션이 "마지막으로 확인한 서버 상태"의 키별 스냅샷. 저장 직전에 로컬 값을
+  // 이 베이스라인과 비교해서, 내가 실제로 건드리지 않은 키는 최신 서버 값을
+  // 그대로 쓰도록 한다 (오래 열려있던 다른 탭이 무관한 저장으로 남의 변경사항을
+  // 통째로 덮어쓰는 사고를 막기 위함 — 실제로 이런 사고로 지출 내역이 사라진 적 있음).
+  window._syncBaseline = {};
+  function updateBaseline(k, v) {
+    try { window._syncBaseline[k] = JSON.parse(JSON.stringify(v)); } catch(e) {}
+  }
+  window._updateSyncBaseline = updateBaseline;
+
+  // 지금 저장을 시도하기 직전, 최신 서버 데이터를 한 번 더 받아온다.
+  window.fsGetFresh = async function() {
+    try {
+      const snap = await getDoc(DOC_REF);
+      return snap.exists() ? snap.data() : null;
+    } catch(e) {
+      return null;
+    }
+  };
+
   // Firestore → 앱 데이터 적용
   function applyData(d) {
     // 배열 길이만으로 비교하면 "삭제"는 항상 로컬을 더 짧게 만들어서,
@@ -62,6 +82,8 @@
           if (remoteLen > 0 || localLen === 0) {
             eval(k + ' = d[k]');
           }
+          // 실제로 반영했든 안 했든, 지금 서버가 갖고 있는 값은 베이스라인으로 기록해둔다
+          updateBaseline(k, d[k]);
         } catch(e) {}
       }
     });
@@ -148,6 +170,7 @@
           if (remoteLen > 0 || localLen === 0) {
             eval(k + ' = d[k]');
           }
+          updateBaseline(k, d[k]);
         } catch(e) {}
       });
 
@@ -1947,10 +1970,37 @@ function saveToLS() {
     localStorage.setItem('haeso_ver', LS_VERSION);
     // Firestore 저장 (디바운스로 중복 저장 방지)
     if (window.fsSave) {
-      const dataObj = {};
-      LS_KEYS.forEach(k => { try { dataObj[k] = eval(k); } catch(e){} });
       clearTimeout(window._fsSaveTimer);
-      window._fsSaveTimer = setTimeout(() => {
+      window._fsSaveTimer = setTimeout(async () => {
+        const dataObj = {};
+        LS_KEYS.forEach(k => { try { dataObj[k] = eval(k); } catch(e){} });
+        // 저장 직전, 내가 실제로 건드리지 않은 키는 최신 서버 값으로 바꿔치기한다.
+        // (오래 떠 있던 다른 탭이 무관한 저장으로 방금 바뀐 데이터를 통째로
+        // 덮어쓰는 사고 방지 — 베이스라인과 같으면 "내가 안 바꾼 것"으로 간주)
+        let swapped = false;
+        try {
+          const fresh = window.fsGetFresh ? await window.fsGetFresh() : null;
+          if (fresh) {
+            const baseline = window._syncBaseline || {};
+            LS_KEYS.forEach(k => {
+              if (fresh[k] === undefined) return;
+              const base = baseline[k];
+              if (base === undefined) return; // 베이스라인 없으면 판단 보류, 로컬 값 유지
+              const localStr = JSON.stringify(dataObj[k]);
+              const baseStr = JSON.stringify(base);
+              if (localStr === baseStr && JSON.stringify(fresh[k]) !== baseStr) {
+                // 내가 이 키를 안 바꿨고, 서버 값이 그 사이 바뀌었음 — 최신 서버 값을 채택
+                dataObj[k] = fresh[k];
+                try { eval(k + ' = fresh[k]'); } catch(e) {}
+                localStorage.setItem('haeso_' + k, JSON.stringify(fresh[k]));
+                if (window._updateSyncBaseline) window._updateSyncBaseline(k, fresh[k]);
+                swapped = true;
+              }
+              // 다르면(=내가 실제로 바꾼 값) dataObj[k]를 그대로 둔다
+            });
+          }
+        } catch(e) { console.warn('저장 전 병합 조회 실패, 로컬 값으로 저장', e); }
+        if (swapped && typeof render === 'function') { render(); if (typeof renderCustRegList === 'function') renderCustRegList(); }
         window.fsSave(dataObj);
       }, 800);
     }
