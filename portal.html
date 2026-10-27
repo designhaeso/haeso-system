@@ -1,0 +1,151 @@
+
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>해소 인테리어 — 공사 진행 안내</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR",sans-serif;background:#f6f5f1;color:#161616}
+.wrap{max-width:720px;margin:0 auto;padding:28px 20px 60px}
+.brand{font-size:13px;letter-spacing:.14em;color:#161616;margin-bottom:28px}
+.hd{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:22px;flex-wrap:wrap;gap:10px}
+.hd h1{font-size:21px;font-weight:600;letter-spacing:-.3px}
+.hd .sub{font-size:12px;color:#9c9b93;margin-top:4px}
+.badge{font-size:12px;padding:5px 12px;border-radius:7px;background:#eeeeec;color:#161616;white-space:nowrap}
+.card{background:#fff;border:1px solid #e4e3dd;border-radius:14px;padding:22px 24px;margin-bottom:16px}
+.lbl{font-size:10.5px;letter-spacing:.08em;color:#9c9b93;margin-bottom:12px;text-transform:uppercase}
+.photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
+.photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid #e4e3dd;cursor:pointer}
+.row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid #ece9e2;font-size:13px;gap:12px}
+.row:last-child{padding-bottom:0}
+.row .d{color:#5c5c57;flex:1}
+.row .amt{font-weight:600;white-space:nowrap}
+.total{display:flex;justify-content:space-between;padding-top:10px;margin-top:4px;border-top:1px solid #161616;font-size:13.5px;font-weight:600}
+.empty{font-size:12.5px;color:#9c9b93;padding:10px 0}
+.state-msg{text-align:center;padding:80px 20px;color:#5c5c57}
+.state-msg i{font-size:30px;color:#9c9b93}
+.state-msg p{margin-top:10px;font-size:13px}
+.progress-track{height:6px;background:#eeeeec;border-radius:3px;margin-top:10px}
+.progress-fill{height:6px;background:#161616;border-radius:3px}
+.lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:999;padding:30px}
+.lightbox.on{display:flex}
+.lightbox img{max-width:100%;max-height:100%;border-radius:4px}
+.lightbox .close{position:absolute;top:18px;right:22px;color:#fff;font-size:22px;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="wrap" id="app">
+  <div class="brand">HAESO</div>
+  <div id="content"><div class="state-msg"><i class="ti ti-loader-2"></i><p>불러오는 중입니다...</p></div></div>
+</div>
+<div class="lightbox" id="lightbox" onclick="closeLightbox()"><span class="close">&times;</span><img id="lightbox-img"></div>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getFirestore, doc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyAcWCIqKr37_sSuTuMVB3xtigiGx-AfmlE",
+    authDomain: "haeso-system.firebaseapp.com",
+    projectId: "haeso-system",
+    storageBucket: "haeso-system.firebasestorage.app",
+    messagingSenderId: "1012449530077",
+    appId: "1:1012449530077:web:c53f39542aa13810908b34"
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const DOC_REF = doc(db, 'haeso', 'data');
+
+  const params = new URLSearchParams(location.search);
+  const portalId = params.get('s') || '';
+
+  function esc(s){
+    return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderNotFound(){
+    document.getElementById('content').innerHTML =
+      '<div class="state-msg"><i class="ti ti-link-off"></i><p>링크가 올바르지 않거나 만료되었습니다.<br>담당자에게 링크를 다시 요청해주세요.</p></div>';
+  }
+
+  function render(d){
+    const siteList = Array.isArray(d.siteList) ? d.siteList : [];
+    const profits = Array.isArray(d.profits) ? d.profits : [];
+    const siteLogs = Array.isArray(d.siteLogs) ? d.siteLogs : [];
+
+    const site = siteList.find(s => s && s.portalId === portalId);
+    if (!site) { renderNotFound(); return; }
+
+    const profit = profits.find(p => p && p.site && p.site.startsWith(site.name)) || {};
+    const changes = Array.isArray(profit.portalChanges) ? profit.portalChanges : [];
+    const materials = Array.isArray(profit.materials) ? profit.materials : [];
+    const photos = [];
+    siteLogs.forEach(l => {
+      if (l && l.site === site.name && Array.isArray(l.photos)) photos.push(...l.photos);
+    });
+
+    const progressMap = { '진행중': 55, '완료': 100 };
+    const progress = progressMap[site.status] != null ? progressMap[site.status] : 30;
+    const total = changes.reduce((a, c) => a + (Number(c.amt) || 0), 0);
+
+    const photosHtml = photos.length
+      ? '<div class="photo-grid">' + photos.map(p => `<img src="${esc(p)}" onclick="window._openLightbox('${esc(p)}')">`).join('') + '</div>'
+      : '<div class="empty">아직 등록된 현장 사진이 없습니다.</div>';
+
+    const materialsHtml = materials.length
+      ? materials.map(m => `<div class="row"><span class="d">${esc(m.cat)}</span><span>${esc(m.item)}</span></div>`).join('')
+      : '<div class="empty">아직 등록된 자재 정보가 없습니다.</div>';
+
+    const changesHtml = changes.length
+      ? changes.map(c => `<div class="row"><span class="d">${esc(c.date) || '-'} · ${esc(c.desc)}</span><span class="amt">${(Number(c.amt)||0).toLocaleString()}원</span></div>`).join('')
+        + `<div class="total"><span>합계</span><span>${total.toLocaleString()}원</span></div>`
+      : '<div class="empty">아직 등록된 추가·변경 비용이 없습니다.</div>';
+
+    document.getElementById('content').innerHTML = `
+      <div class="hd">
+        <div><h1>${esc(site.name)}</h1><div class="sub">${esc(site.addr || '')}</div></div>
+        <span class="badge">${esc(site.status || '진행중')}</span>
+      </div>
+      <div class="card">
+        <div class="lbl">공정 진행률</div>
+        <div style="font-size:26px;font-weight:600">${progress}%</div>
+        <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+      </div>
+      <div class="card">
+        <div class="lbl">현장 사진</div>
+        ${photosHtml}
+      </div>
+      <div class="card">
+        <div class="lbl">선택하신 자재</div>
+        ${materialsHtml}
+      </div>
+      <div class="card">
+        <div class="lbl">추가·변경 비용</div>
+        ${changesHtml}
+      </div>
+    `;
+  }
+
+  window._openLightbox = function(src){
+    document.getElementById('lightbox-img').src = src;
+    document.getElementById('lightbox').classList.add('on');
+  };
+  window.closeLightbox = function(){
+    document.getElementById('lightbox').classList.remove('on');
+  };
+
+  if (!portalId) {
+    renderNotFound();
+  } else {
+    onSnapshot(DOC_REF, (snap) => {
+      if (!snap.exists()) { renderNotFound(); return; }
+      render(snap.data());
+    }, () => { renderNotFound(); });
+  }
+</script>
+</body>
+</html>
