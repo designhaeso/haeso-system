@@ -19,6 +19,9 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR"
 .lbl{font-size:10.5px;letter-spacing:.08em;color:#9c9b93;margin-bottom:12px;text-transform:uppercase}
 .photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px}
 .photo-grid img{width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px;border:1px solid #e4e3dd;cursor:pointer}
+.photo-item{position:relative}
+.photo-date{position:absolute;bottom:5px;left:5px;background:rgba(0,0,0,.6);color:#fff;font-size:10px;padding:2px 6px;border-radius:4px}
+.material-thumb{width:28px;height:28px;object-fit:cover;border-radius:5px;border:1px solid #e4e3dd;cursor:pointer;flex-shrink:0}
 .row{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-top:1px solid #ece9e2;font-size:13px;gap:12px}
 .row:last-child{padding-bottom:0}
 .row .d{color:#5c5c57;flex:1}
@@ -29,7 +32,19 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR"
 .state-msg i{font-size:30px;color:#9c9b93}
 .state-msg p{margin-top:10px;font-size:13px}
 .progress-track{height:6px;background:#eeeeec;border-radius:3px;margin-top:10px}
-.progress-fill{height:6px;background:#161616;border-radius:3px}
+.progress-fill{height:6px;background:#161616;border-radius:3px;transition:width .2s}
+.sched-head{display:flex;align-items:center;justify-content:center;gap:16px;margin-bottom:14px}
+.sched-head span{font-size:14px;font-weight:600;min-width:90px;text-align:center}
+.sched-nav{background:none;border:1px solid #e4e3dd;border-radius:7px;width:30px;height:30px;cursor:pointer;color:#161616;display:flex;align-items:center;justify-content:center;font-size:15px}
+.sched-nav:hover{background:#f4f3ee}
+.sched-grid{display:grid;grid-template-columns:repeat(7,1fr);border:1px solid #e4e3dd;border-radius:10px;overflow:hidden}
+.sched-dow{text-align:center;padding:8px 0;font-size:11px;font-weight:600;color:#5c5c57;background:#faf9f6;border-right:1px solid #ece9e2;border-bottom:1px solid #ece9e2}
+.sched-dow:last-child{border-right:none}
+.sched-cell{min-height:56px;padding:6px;border-right:1px solid #ece9e2;border-bottom:1px solid #ece9e2;font-size:11px}
+.sched-cell:nth-child(7n){border-right:none}
+.sched-daynum{font-size:11px;font-weight:600;color:#5c5c57;display:block;margin-bottom:4px}
+.sched-today .sched-daynum{display:inline-flex;width:20px;height:20px;align-items:center;justify-content:center;border-radius:50%;background:#161616;color:#fff}
+.sched-tag{display:inline-block;font-size:10px;padding:2px 6px;border-radius:4px;background:#161616;color:#fff}
 .lightbox{position:fixed;inset:0;background:rgba(0,0,0,.88);display:none;align-items:center;justify-content:center;z-index:999;padding:30px}
 .lightbox.on{display:flex}
 .lightbox img{max-width:100%;max-height:100%;border-radius:4px}
@@ -67,15 +82,74 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR"
     return String(s==null?'':s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
+  // 공정표 달력 상태 (월 이동 시에도 마지막으로 받은 데이터로 다시 그린다)
+  let calYear = new Date().getFullYear();
+  let calMonth = new Date().getMonth();
+  let lastData = null;
+
+  function parseScheduleDate(s){
+    const m = /^(\d{4})\.(\d{2})\.(\d{2})$/.exec(s || '');
+    if (!m) return null;
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  }
+
+  // 공정표(schedule)에 등록된 날짜들의 최솟값~최댓값을 전체 공사 기간으로 보고,
+  // 오늘이 그 안에서 어디쯤인지로 진행률을 자동 계산한다.
+  function calcProgress(schedule){
+    const dates = (Array.isArray(schedule) ? schedule : [])
+      .map(s => parseScheduleDate(s.date))
+      .filter(Boolean)
+      .sort((a, b) => a - b);
+    if (!dates.length) return null;
+    const min = dates[0], max = dates[dates.length - 1];
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    if (max.getTime() === min.getTime()) return today >= min ? 100 : 0;
+    if (today <= min) return 0;
+    if (today >= max) return 100;
+    return Math.round((today - min) / (max - min) * 100);
+  }
+
+  function renderScheduleCalendar(schedule){
+    const list = Array.isArray(schedule) ? schedule : [];
+    const days = ['일','월','화','수','목','금','토'];
+    const first = new Date(calYear, calMonth, 1);
+    const last = new Date(calYear, calMonth + 1, 0);
+    const today = new Date();
+    let html = '<div class="sched-head">'
+      + '<button type="button" class="sched-nav" onclick="window._calPrev()"><i class="ti ti-chevron-left"></i></button>'
+      + `<span>${calYear}년 ${calMonth + 1}월</span>`
+      + '<button type="button" class="sched-nav" onclick="window._calNext()"><i class="ti ti-chevron-right"></i></button>'
+      + '</div><div class="sched-grid">';
+    days.forEach(d => { html += `<div class="sched-dow">${d}</div>`; });
+    for (let i = 0; i < first.getDay(); i++) html += '<div class="sched-cell"></div>';
+    for (let d = 1; d <= last.getDate(); d++) {
+      const ds = calYear + '.' + String(calMonth + 1).padStart(2, '0') + '.' + String(d).padStart(2, '0');
+      const entry = list.find(s => s && s.date === ds);
+      const isToday = d === today.getDate() && calMonth === today.getMonth() && calYear === today.getFullYear();
+      html += `<div class="sched-cell${isToday ? ' sched-today' : ''}"><span class="sched-daynum">${d}</span>${entry ? `<span class="sched-tag">${esc(entry.process)}</span>` : ''}</div>`;
+    }
+    html += '</div>';
+    return html;
+  }
+
+  window._calPrev = function(){
+    calMonth--; if (calMonth < 0) { calMonth = 11; calYear--; }
+    if (lastData) render(lastData);
+  };
+  window._calNext = function(){
+    calMonth++; if (calMonth > 11) { calMonth = 0; calYear++; }
+    if (lastData) render(lastData);
+  };
+
   function renderNotFound(){
     document.getElementById('content').innerHTML =
       '<div class="state-msg"><i class="ti ti-link-off"></i><p>링크가 올바르지 않거나 만료되었습니다.<br>담당자에게 링크를 다시 요청해주세요.</p></div>';
   }
 
   function render(d){
+    lastData = d;
     const siteList = Array.isArray(d.siteList) ? d.siteList : [];
     const profits = Array.isArray(d.profits) ? d.profits : [];
-    const siteLogs = Array.isArray(d.siteLogs) ? d.siteLogs : [];
 
     const site = siteList.find(s => s && s.portalId === portalId);
     if (!site) { renderNotFound(); return; }
@@ -83,21 +157,22 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR"
     const profit = profits.find(p => p && p.site && p.site.startsWith(site.name)) || {};
     const changes = Array.isArray(profit.portalChanges) ? profit.portalChanges : [];
     const materials = Array.isArray(profit.materials) ? profit.materials : [];
-    const photos = [];
-    siteLogs.forEach(l => {
-      if (l && l.site === site.name && Array.isArray(l.photos)) photos.push(...l.photos);
-    });
+    const photos = (Array.isArray(profit.portalPhotos) ? profit.portalPhotos : []).slice().reverse();
+    const schedule = Array.isArray(profit.schedule) ? profit.schedule : [];
 
+    // 공정표에 등록된 날짜가 있으면 그걸로 자동 계산, 없으면 기존 방식(상태 기준)으로 대체
+    const autoProgress = calcProgress(schedule);
     const progressMap = { '진행중': 55, '완료': 100 };
-    const progress = progressMap[site.status] != null ? progressMap[site.status] : 30;
+    const progress = autoProgress != null ? autoProgress : (progressMap[site.status] != null ? progressMap[site.status] : 30);
     const total = changes.reduce((a, c) => a + (Number(c.amt) || 0), 0);
+    const calendarHtml = renderScheduleCalendar(schedule);
 
     const photosHtml = photos.length
-      ? '<div class="photo-grid">' + photos.map(p => `<img src="${esc(p)}" onclick="window._openLightbox('${esc(p)}')">`).join('') + '</div>'
+      ? '<div class="photo-grid">' + photos.map(p => `<div class="photo-item"><img src="${esc(p.url)}" onclick="window._openLightbox('${esc(p.url)}')">${p.date ? `<span class="photo-date">${esc(p.date)}</span>` : ''}</div>`).join('') + '</div>'
       : '<div class="empty">아직 등록된 현장 사진이 없습니다.</div>';
 
     const materialsHtml = materials.length
-      ? materials.map(m => `<div class="row"><span class="d">${esc(m.cat)}</span><span>${esc(m.item)}</span></div>`).join('')
+      ? materials.map(m => `<div class="row"><span class="d" style="display:flex;align-items:center;gap:8px">${m.img ? `<img class="material-thumb" src="${esc(m.img)}" onclick="window._openLightbox('${esc(m.img)}')">` : ''}${esc(m.cat)}</span><span>${esc(m.item)}</span></div>`).join('')
       : '<div class="empty">아직 등록된 자재 정보가 없습니다.</div>';
 
     const changesHtml = changes.length
@@ -114,6 +189,10 @@ html,body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans KR"
         <div class="lbl">공정 진행률</div>
         <div style="font-size:26px;font-weight:600">${progress}%</div>
         <div class="progress-track"><div class="progress-fill" style="width:${progress}%"></div></div>
+      </div>
+      <div class="card">
+        <div class="lbl">공정표</div>
+        ${calendarHtml}
       </div>
       <div class="card">
         <div class="lbl">현장 사진</div>

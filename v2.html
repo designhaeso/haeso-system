@@ -1362,7 +1362,7 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
   </div>
 </div></div>
 
-<div class="modal-bg" id="modal-portal-manage"><div class="modal" style="max-width:640px">
+<div class="modal-bg" id="modal-portal-manage"><div class="modal" style="max-width:760px">
   <div class="mh"><span class="mt" id="pm-title">포털 관리</span><button class="xb" onclick="closeM('modal-portal-manage')"><i class="ti ti-x"></i></button></div>
   <div class="mb">
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px;padding:10px 12px;background:var(--bg3);border-radius:var(--radius);border:1px solid var(--border)">
@@ -1370,6 +1370,28 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
       <span id="pm-link-text" style="flex:1;font-size:11.5px;color:var(--text2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></span>
       <button class="btn btn-sm" id="pm-link-btn"></button>
     </div>
+
+    <div style="margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--border)">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div class="fl">공정표 (고객 포털에 달력으로 표시되고, 상단 진행률도 여기서 자동 계산됩니다)</div>
+        <div style="display:flex;align-items:center;gap:6px">
+          <button type="button" class="icon-btn" onclick="pmSchedPrev()"><i class="ti ti-chevron-left"></i></button>
+          <span id="pm-sched-title" style="font-size:12px;font-weight:600;min-width:80px;text-align:center"></span>
+          <button type="button" class="icon-btn" onclick="pmSchedNext()"><i class="ti ti-chevron-right"></i></button>
+        </div>
+      </div>
+      <div id="pm-sched-grid" style="display:grid;grid-template-columns:repeat(7,1fr);border:1px solid var(--border);border-radius:var(--radius);overflow:hidden;margin-bottom:10px"></div>
+      <div style="display:flex;gap:4px;align-items:center">
+        <input type="date" id="pms-date" style="font-size:11px;flex:1">
+        <select id="pms-process" style="font-size:11px;flex:1">
+          <option value="">공정 선택</option>
+          <option>철거</option><option>설비</option><option>샷시</option><option>전기</option><option>목공</option><option>타일</option><option>필름</option><option>도배</option><option>바닥</option><option>가구</option><option>욕실</option><option>공조</option><option>마감</option><option>기타</option>
+        </select>
+        <button type="button" class="btn btn-sm" onclick="setPortalScheduleDay()"><i class="ti ti-check"></i> 지정</button>
+        <button type="button" class="btn btn-sm" onclick="clearPortalScheduleDay()" style="color:var(--red-t)"><i class="ti ti-x"></i> 해제</button>
+      </div>
+    </div>
+
     <div class="g2">
       <div>
         <div class="fl" style="margin-bottom:8px">추가·변경 비용</div>
@@ -1380,8 +1402,23 @@ input[type=date].date-pick:focus{outline:none;border-color:var(--acc)}
       <div>
         <div class="fl" style="margin-bottom:8px">선택 자재</div>
         <div id="pm-materials-list" style="margin-bottom:10px;max-height:160px;overflow-y:auto"></div>
-        <div style="display:flex;gap:4px"><input type="text" id="pmm-cat" placeholder="공정(예: 타일)" style="font-size:11px;flex:1"><input type="text" id="pmm-item" placeholder="품목" style="font-size:11px;flex:1.4"></div>
+        <div style="display:flex;gap:4px;align-items:center">
+          <input type="text" id="pmm-cat" placeholder="공정(예: 타일)" style="font-size:11px;flex:1">
+          <input type="text" id="pmm-item" placeholder="품목" style="font-size:11px;flex:1.4">
+          <input type="file" accept="image/*" id="pmm-img-inp" style="display:none" onchange="pmMaterialImgChange(event)">
+          <button type="button" class="btn btn-sm" id="pmm-img-btn" style="padding:0;width:30px;height:30px;flex-shrink:0;display:flex;align-items:center;justify-content:center" onclick="document.getElementById('pmm-img-inp').click()" title="사진 첨부"><i class="ti ti-photo"></i></button>
+        </div>
         <button class="btn btn-sm" style="width:100%;margin-top:6px" onclick="addPortalMaterial()"><i class="ti ti-plus"></i> 추가</button>
+      </div>
+    </div>
+
+    <div style="margin-top:18px;padding-top:16px;border-top:1px solid var(--border)">
+      <div class="fl" style="margin-bottom:8px">현장 사진 공유</div>
+      <div id="pm-photos-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(64px,1fr));gap:6px;margin-bottom:10px"></div>
+      <div style="display:flex;gap:4px">
+        <input type="date" id="pmp-date" style="font-size:11px;width:140px">
+        <input type="file" accept="image/*" multiple id="pmp-photo-inp" style="display:none" onchange="addPortalPhotos(event)">
+        <button type="button" class="btn btn-sm" style="flex:1" onclick="document.getElementById('pmp-photo-inp').click()"><i class="ti ti-upload"></i> 오늘 현장 사진 업로드</button>
       </div>
     </div>
   </div>
@@ -1966,11 +2003,20 @@ function renderPortalAdmin(){
 window._pmSiteIdx=null;
 function openPortalManage(i){
   window._pmSiteIdx=i;
+  window._pmPendingMaterialImg='';
+  window._pmSchedYear=new Date().getFullYear();
+  window._pmSchedMonth=new Date().getMonth();
   const s=siteList[i];
   document.getElementById('pm-title').textContent=s.name+' — 포털 관리';
+  const pd=document.getElementById('pmp-date');if(pd)pd.value=new Date().toISOString().slice(0,10);
+  const imgBtn=document.getElementById('pmm-img-btn');if(imgBtn)imgBtn.innerHTML='<i class="ti ti-photo"></i>';
+  const pms=document.getElementById('pms-date');if(pms)pms.value='';
+  const pmsP=document.getElementById('pms-process');if(pmsP)pmsP.value='';
   renderPortalLinkArea();
   renderPortalChangesList();
   renderPortalMaterialsList();
+  renderPortalPhotosGrid();
+  renderPortalSchedule();
   openM('modal-portal-manage');
 }
 function getPortalProfit(){
@@ -1979,6 +2025,8 @@ function getPortalProfit(){
   if(!p){p={site:s.name+' — '+(s.addr||''),contract:s.amt||0,costs:[],status:'진행중'};profits.push(p);}
   if(!p.portalChanges)p.portalChanges=[];
   if(!p.materials)p.materials=[];
+  if(!p.portalPhotos)p.portalPhotos=[];
+  if(!p.schedule)p.schedule=[];
   return p;
 }
 function renderPortalLinkArea(){
@@ -2025,19 +2073,108 @@ function renderPortalMaterialsList(){
   const p=getPortalProfit();if(!p)return;
   const list=document.getElementById('pm-materials-list');
   if(!p.materials.length){list.innerHTML='<div style="font-size:11px;color:var(--text3)">등록된 항목이 없습니다</div>';return;}
-  list.innerHTML=p.materials.map((m,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="color:var(--text3)">${m.cat}</span><span style="display:flex;align-items:center;gap:8px">${m.item}<i class="ti ti-x" style="cursor:pointer;color:var(--red)" onclick="delPortalMaterial(${i})"></i></span></div>`).join('');
+  list.innerHTML=p.materials.map((m,i)=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:12px"><span style="display:flex;align-items:center;gap:6px;min-width:0">${m.img?`<img src="${m.img}" style="width:26px;height:26px;object-fit:cover;border-radius:5px;border:1px solid var(--border);cursor:pointer;flex-shrink:0" onclick="awOpenImgViewer([{url:'${m.img}',name:'${(m.item||'').replace(/'/g,"")}'}])">`:''}<span style="color:var(--text3);flex-shrink:0">${m.cat}</span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${m.item}</span></span><i class="ti ti-x" style="cursor:pointer;color:var(--red);flex-shrink:0" onclick="delPortalMaterial(${i})"></i></div>`).join('');
+}
+async function pmMaterialImgChange(e){
+  const file=e.target.files[0];if(!file)return;
+  const btn=document.getElementById('pmm-img-btn');
+  btn.innerHTML='<i class="ti ti-loader"></i>';
+  const url=await uploadToCloud(file);
+  if(!url){alert('이미지 업로드 실패');btn.innerHTML='<i class="ti ti-photo"></i>';return;}
+  window._pmPendingMaterialImg=url;
+  btn.innerHTML=`<img src="${url}" style="width:100%;height:100%;object-fit:cover;border-radius:4px">`;
+  e.target.value='';
 }
 function addPortalMaterial(){
   const cat=document.getElementById('pmm-cat').value.trim();
   const item=document.getElementById('pmm-item').value.trim();
   if(!item){alert('품목을 입력해주세요.');return;}
   const p=getPortalProfit();
-  p.materials.push({cat:cat||'기타',item});
+  p.materials.push({cat:cat||'기타',item,img:window._pmPendingMaterialImg||''});
   renderPortalMaterialsList();
   document.getElementById('pmm-cat').value='';document.getElementById('pmm-item').value='';
+  window._pmPendingMaterialImg='';
+  const imgBtn=document.getElementById('pmm-img-btn');if(imgBtn)imgBtn.innerHTML='<i class="ti ti-photo"></i>';
   renderPortalAdmin();triggerSave();
 }
 function delPortalMaterial(i){const p=getPortalProfit();p.materials.splice(i,1);renderPortalMaterialsList();triggerSave();}
+function renderPortalPhotosGrid(){
+  const p=getPortalProfit();if(!p)return;
+  const grid=document.getElementById('pm-photos-grid');
+  if(!p.portalPhotos.length){grid.innerHTML='<div style="font-size:11px;color:var(--text3);grid-column:1/-1">아직 올린 현장 사진이 없습니다</div>';return;}
+  const ordered=p.portalPhotos.map((ph,i)=>({ph,i})).slice().reverse();
+  grid.innerHTML=ordered.map(({ph,i})=>`<div style="position:relative"><img src="${ph.url}" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:6px;border:1px solid var(--border);cursor:pointer" onclick="awOpenImgViewer(${JSON.stringify(p.portalPhotos.map(x=>({url:x.url,name:x.date||''})))}.slice().reverse())"><span style="position:absolute;bottom:2px;left:2px;background:rgba(0,0,0,.6);color:#fff;font-size:9px;padding:1px 4px;border-radius:3px">${ph.date||''}</span><i class="ti ti-x" style="position:absolute;top:2px;right:2px;background:rgba(0,0,0,.6);color:#fff;border-radius:50%;width:16px;height:16px;display:flex;align-items:center;justify-content:center;font-size:11px;cursor:pointer" onclick="event.stopPropagation();delPortalPhoto(${i})"></i></div>`).join('');
+}
+async function addPortalPhotos(e){
+  const files=Array.from(e.target.files||[]);if(!files.length)return;
+  const date=(document.getElementById('pmp-date').value||new Date().toISOString().slice(0,10)).replace(/-/g,'.');
+  const p=getPortalProfit();
+  for(const file of files){
+    const url=await uploadToCloud(file);
+    if(url)p.portalPhotos.push({date,url});
+  }
+  renderPortalPhotosGrid();
+  e.target.value='';
+  triggerSave();
+}
+function delPortalPhoto(i){const p=getPortalProfit();p.portalPhotos.splice(i,1);renderPortalPhotosGrid();triggerSave();}
+
+// ===== 포털 공정표 (달력) =====
+window._pmSchedYear=new Date().getFullYear();
+window._pmSchedMonth=new Date().getMonth();
+function pmSchedPrev(){window._pmSchedMonth--;if(window._pmSchedMonth<0){window._pmSchedMonth=11;window._pmSchedYear--;}renderPortalSchedule();}
+function pmSchedNext(){window._pmSchedMonth++;if(window._pmSchedMonth>11){window._pmSchedMonth=0;window._pmSchedYear++;}renderPortalSchedule();}
+function renderPortalSchedule(){
+  const p=getPortalProfit();if(!p)return;
+  if(!p.schedule)p.schedule=[];
+  const y=window._pmSchedYear,m=window._pmSchedMonth;
+  const titleEl=document.getElementById('pm-sched-title');if(titleEl)titleEl.textContent=y+'년 '+(m+1)+'월';
+  const grid=document.getElementById('pm-sched-grid');if(!grid)return;
+  const first=new Date(y,m,1);const last=new Date(y,m+1,0);
+  const today=new Date();
+  const days=['일','월','화','수','목','금','토'];
+  let html='';
+  for(let di=0;di<7;di++)html+='<div class="cal-head">'+days[di]+'</div>';
+  for(let si=0;si<first.getDay();si++)html+='<div class="cal-cell"></div>';
+  for(let d=1;d<=last.getDate();d++){
+    const ds=y+'.'+String(m+1).padStart(2,'0')+'.'+String(d).padStart(2,'0');
+    const entry=p.schedule.find(x=>x.date===ds);
+    const isTdy=d===today.getDate()&&m===today.getMonth()&&y===today.getFullYear();
+    html+='<div class="cal-cell" style="cursor:pointer;min-height:48px" onclick="pmSchedDayClick(\''+ds+'\')"><div class="cal-num'+(isTdy?' today':'')+'">'+d+'</div>'+(entry?bd(entry.process):'')+'</div>';
+  }
+  grid.innerHTML=html;
+}
+function pmSchedDayClick(ds){
+  const dateInp=document.getElementById('pms-date');
+  if(dateInp)dateInp.value=ds.replace(/\./g,'-');
+  const p=getPortalProfit();
+  const entry=p&&p.schedule&&p.schedule.find(x=>x.date===ds);
+  const procSel=document.getElementById('pms-process');
+  if(procSel)procSel.value=entry?entry.process:'';
+}
+function setPortalScheduleDay(){
+  const dateRaw=document.getElementById('pms-date').value;
+  if(!dateRaw){alert('날짜를 선택해주세요.');return;}
+  const process=document.getElementById('pms-process').value;
+  if(!process){alert('공정을 선택해주세요.');return;}
+  const ds=dateRaw.replace(/-/g,'.');
+  const p=getPortalProfit();
+  const existing=p.schedule.find(x=>x.date===ds);
+  if(existing)existing.process=process;else p.schedule.push({date:ds,process});
+  renderPortalSchedule();
+  renderPortalAdmin();triggerSave();
+}
+function clearPortalScheduleDay(){
+  const dateRaw=document.getElementById('pms-date').value;
+  if(!dateRaw){alert('날짜를 선택해주세요.');return;}
+  const ds=dateRaw.replace(/-/g,'.');
+  const p=getPortalProfit();
+  const i=p.schedule.findIndex(x=>x.date===ds);
+  if(i>=0)p.schedule.splice(i,1);
+  document.getElementById('pms-process').value='';
+  renderPortalSchedule();
+  renderPortalAdmin();triggerSave();
+}
 function savePay(){const n=document.getElementById('pay-name').value.trim();if(!n){alert('고객명은 필수입니다.');return;}const awPay=awGetData('pay');const hasFile=!!awPay;const payType=document.getElementById('pay-type-sel').value;const payPhone=document.getElementById('pay-phone').value||'';const payDate=dateToKo(document.getElementById('pay-dt').value)||new Date().toLocaleDateString('ko',{year:'numeric',month:'2-digit',day:'2-digit'});const payMemo=document.getElementById('pay-memo-inp').value;const payAmt=Number(document.getElementById('pay-amt-inp').value)||0;payments.unshift({date:payDate,target:n,phone:payPhone,mgr:document.getElementById('pay-mgr-sel').value,type:payType,amt:payAmt,method:document.getElementById('pay-method-sel').value,memo:payMemo,status:document.getElementById('pay-status-sel').value,vat:document.getElementById('pay-vat-sel').value,receipt:hasFile,attachData:awPay});
 // 5) 출금이면 → 손익계산서 지출 항목 자동 연동
 if(payType==='출금'){const pi=profits.findIndex(p=>(p.name===n||(p.site||'').startsWith(n))&&(p.phone===payPhone||!payPhone||!p.phone));if(pi>=0){const payMgr=document.getElementById('pay-mgr-sel').value||'—';const costEntry={date:payDate,payer:payMgr,process:'',desc:payMemo||'결제관리 자동연동',amt:payAmt,receipt:hasFile,receiptURL:hasFile&&window._pendingPayFileURL?window._pendingPayFileURL:null};if(costEntry.receiptURL)fileURLMap['pay_cost_'+Date.now()]=costEntry.receiptURL;profits[pi].costs.push(costEntry);renderProfit();updateMissing();}};renderPay();triggerSave();closeM('modal-add-pay');}
